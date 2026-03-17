@@ -48,3 +48,9 @@ bld/
 # OS
 .DS_Store
 Thumbs.db
+
+# Scripts
+dotnet-install.sh
+
+# Sisyphus
+.sisyphus/

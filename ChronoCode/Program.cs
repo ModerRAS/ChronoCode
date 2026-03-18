@@ -1,17 +1,17 @@
 using ChronoCode.Services;
 using Hangfire;
+using Hangfire.MemoryStorage;
 using Hangfire.Dashboard;
 
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddControllers();
-builder.Services.AddEndpointsApiExplorer();
-builder.Services.AddSwaggerGen();
 
 builder.Services.AddHangfire(config => config
     .SetDataCompatibilityLevel(CompatibilityLevel.Version_180)
     .UseSimpleAssemblyNameTypeSerializer()
-    .UseRecommendedSerializerSettings());
+    .UseRecommendedSerializerSettings()
+    .UseMemoryStorage());
 
 builder.Services.AddHangfireServer(options => options.ServerName = "ChronoCode");
 
@@ -25,9 +25,6 @@ builder.Services.AddSingleton<ISchedulerService, HangfireSchedulerService>();
 builder.Services.AddSingleton<ScheduledTaskJob>();
 
 var app = builder.Build();
-
-app.UseSwagger();
-app.UseSwaggerUI();
 
 app.UseHangfireDashboard("/hangfire", new DashboardOptions
 {

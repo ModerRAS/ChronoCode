@@ -39,7 +39,7 @@ public class TasksController : ControllerBase
             _schedulerService.ScheduleTask(task);
         }
 
-        return Ok(MapToDto(task));
+        return CreatedAtAction(nameof(GetTask), new { id = task.Id }, MapToDto(task));
     }
 
     [HttpGet]

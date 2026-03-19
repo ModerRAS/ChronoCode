@@ -225,26 +225,67 @@ public class InMemoryOpencodeServerManager : IOpencodeServerManager
 
 public class InMemoryOpencodeClient : IOpencodeClient
 {
-    public Task<string> SendTaskAsync(string prompt, CancellationToken cancellationToken = default)
-        => Task.FromResult("Mock response");
+    public Task<string> CreateSessionAsync(string workingDirectory, CancellationToken cancellationToken = default)
+        => Task.FromResult("mock-session-id");
+    
+    public Task<string> SendPromptAsync(string sessionId, string prompt, string workingDirectory, CancellationToken cancellationToken = default)
+        => Task.FromResult("Mock AI response");
+    
+    public Task<string> SendPromptWithStreamingAsync(string sessionId, string prompt, string workingDirectory, Func<string, Task> onChunk, CancellationToken cancellationToken = default)
+        => Task.FromResult("Mock streaming response");
+    
+    public Task<List<FileDiff>> GetSessionDiffAsync(string sessionId, string? messageId = null, CancellationToken cancellationToken = default)
+        => Task.FromResult(new List<FileDiff>());
+    
+    public Task AbortSessionAsync(string sessionId, CancellationToken cancellationToken = default)
+        => Task.CompletedTask;
+    
+    public Task<List<SessionInfo>> ListSessionsAsync(CancellationToken cancellationToken = default)
+        => Task.FromResult(new List<SessionInfo>());
+    
+    public Task<SessionInfo?> GetSessionAsync(string sessionId, CancellationToken cancellationToken = default)
+        => Task.FromResult<SessionInfo?>(null);
 }
 
 public class InMemoryGitService : IGitService
 {
-    public Task<string> CloneRepositoryAsync(string repositoryUrl, string branchName)
-        => Task.FromResult("/tmp/mock/path");
-    public Task<string> CreateBranchAsync(string path, string branchName)
+    public Task<string> CloneRepositoryAsync(string repoUrl, string workspacePath)
+        => Task.FromResult("/tmp/mock/repo");
+    
+    public Task<string> CreateBranchAsync(string repoPath, string branchName, string baseBranch)
         => Task.FromResult(branchName);
-    public Task CommitChangesAsync(string path, string message)
+    
+    public Task CheckoutBranchAsync(string repoPath, string branchName)
         => Task.CompletedTask;
-    public Task<string> GetLatestCommitShaAsync(string path)
-        => Task.FromResult("abc123");
-    public Task<string> CreatePullRequestAsync(string path, string branchName, string title, string body)
-        => Task.FromResult("https://github.com/mock/pr");
+    
+    public Task<string> CommitChangesAsync(string repoPath, string message)
+        => Task.FromResult("mock-commit-sha");
+    
+    public Task PushChangesAsync(string repoPath, string remoteName = "origin")
+        => Task.CompletedTask;
+    
+    public Task<string> CreatePullRequestAsync(string repoPath, string branchName, string baseBranch, string title, string body)
+        => Task.FromResult("https://github.com/mock/pr/1");
+    
+    public Task<List<GitFileStatus>> GetChangedFilesAsync(string repoPath)
+        => Task.FromResult(new List<GitFileStatus>());
 }
 
 public class InMemoryTaskRunner : ITaskRunner
 {
-    public Task ExecuteTaskAsync(ScheduledTask task, CancellationToken cancellationToken = default)
-        => Task.CompletedTask;
+    public Task<TaskExecution> ExecuteTaskAsync(ScheduledTask task, CancellationToken cancellationToken = default)
+    {
+        var execution = new TaskExecution
+        {
+            Id = Guid.NewGuid(),
+            TaskId = task.Id,
+            StartedAt = DateTime.UtcNow,
+            CompletedAt = DateTime.UtcNow,
+            Status = Models.TaskStatus.Completed,
+            BranchName = "mock-branch",
+            CommitSha = "mock-sha",
+            FilesChanged = 0
+        };
+        return Task.FromResult(execution);
+    }
 }

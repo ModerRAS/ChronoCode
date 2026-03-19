@@ -1,5 +1,8 @@
 using ChronoCode.Data;
+using ChronoCode.Middleware;
 using ChronoCode.Services;
+using ChronoCode.Validators;
+using FluentValidation;
 using Hangfire;
 using Hangfire.MemoryStorage;
 using Hangfire.Dashboard;
@@ -29,7 +32,13 @@ builder.Services.AddSingleton<ITaskRunner, TaskRunner>();
 builder.Services.AddSingleton<ISchedulerService, HangfireSchedulerService>();
 builder.Services.AddSingleton<ScheduledTaskJob>();
 
+builder.Services.AddValidatorsFromAssemblyContaining<CreateTaskDtoValidator>();
+
 var app = builder.Build();
+
+app.UseRouting();
+
+app.UseExceptionHandling();
 
 app.UseHangfireDashboard("/hangfire", new DashboardOptions
 {

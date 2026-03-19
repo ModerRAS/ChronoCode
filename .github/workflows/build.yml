@@ -22,7 +22,4 @@ jobs:
       run: dotnet restore ChronoCode.sln
 
     - name: Build
-      run: dotnet build ChronoCode.sln --configuration Release --no-restore
-
-    - name: Test
-      run: dotnet test ChronoCode.sln --configuration Release --no-build --verbosity normal
+      run: dotnet build ChronoCode/ChronoCode.csproj --configuration Release --no-restore

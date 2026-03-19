@@ -1,7 +1,9 @@
+using ChronoCode.Data;
 using ChronoCode.Services;
 using Hangfire;
 using Hangfire.MemoryStorage;
 using Hangfire.Dashboard;
+using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -15,8 +17,11 @@ builder.Services.AddHangfire(config => config
 
 builder.Services.AddHangfireServer(options => options.ServerName = "ChronoCode");
 
-builder.Services.AddSingleton<ITaskRepository, InMemoryTaskRepository>();
-builder.Services.AddSingleton<IExecutionRepository, InMemoryExecutionRepository>();
+builder.Services.AddDbContext<ChronoDbContext>(options =>
+    options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
+
+builder.Services.AddScoped<ITaskRepository, EfTaskRepository>();
+builder.Services.AddScoped<IExecutionRepository, EfExecutionRepository>();
 builder.Services.AddSingleton<IOpencodeServerManager, OpencodeServerManager>();
 builder.Services.AddSingleton<IOpencodeClient, OpencodeClient>();
 builder.Services.AddSingleton<IGitService, GitService>();

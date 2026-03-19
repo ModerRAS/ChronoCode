@@ -205,6 +205,253 @@ public class TasksControllerTests : IClassFixture<WebApplicationFactory<Program>
 
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
     }
+
+    [Fact]
+    public async Task Post_CreateTask_Returns400_WhenNameIsEmpty()
+    {
+        var dto = new CreateTaskDto
+        {
+            Name = "",
+            CronExpression = "0 0 * * *",
+            RepositoryUrl = "https://github.com/test/repo",
+            Prompt = "Test prompt"
+        };
+
+        var response = await _client.PostAsJsonAsync("/api/tasks", dto);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Post_CreateTask_Returns400_WhenCronIsInvalid()
+    {
+        var dto = new CreateTaskDto
+        {
+            Name = "Test Task",
+            CronExpression = "invalid-cron",
+            RepositoryUrl = "https://github.com/test/repo",
+            Prompt = "Test prompt"
+        };
+
+        var response = await _client.PostAsJsonAsync("/api/tasks", dto);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Post_CreateTask_Returns400_WhenCronHasTooFewParts()
+    {
+        var dto = new CreateTaskDto
+        {
+            Name = "Test Task",
+            CronExpression = "0 0 * *",
+            RepositoryUrl = "https://github.com/test/repo",
+            Prompt = "Test prompt"
+        };
+
+        var response = await _client.PostAsJsonAsync("/api/tasks", dto);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Post_CreateTask_Returns400_WhenUrlIsInvalid()
+    {
+        var dto = new CreateTaskDto
+        {
+            Name = "Test Task",
+            CronExpression = "0 0 * * *",
+            RepositoryUrl = "not-a-valid-url",
+            Prompt = "Test prompt"
+        };
+
+        var response = await _client.PostAsJsonAsync("/api/tasks", dto);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Post_CreateTask_Returns400_WhenPromptIsEmpty()
+    {
+        var dto = new CreateTaskDto
+        {
+            Name = "Test Task",
+            CronExpression = "0 0 * * *",
+            RepositoryUrl = "https://github.com/test/repo",
+            Prompt = ""
+        };
+
+        var response = await _client.PostAsJsonAsync("/api/tasks", dto);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Post_CreateTask_Returns400_WhenNameIsTooLong()
+    {
+        var dto = new CreateTaskDto
+        {
+            Name = new string('a', 101),
+            CronExpression = "0 0 * * *",
+            RepositoryUrl = "https://github.com/test/repo",
+            Prompt = "Test prompt"
+        };
+
+        var response = await _client.PostAsJsonAsync("/api/tasks", dto);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+}
+
+public class AIControllerTests : IClassFixture<WebApplicationFactory<Program>>, IDisposable
+{
+    private readonly WebApplicationFactory<Program> _factory;
+    private readonly HttpClient _client;
+    private readonly IServiceScope _scope;
+
+    public AIControllerTests(WebApplicationFactory<Program> factory)
+    {
+        _factory = factory.WithWebHostBuilder(builder =>
+        {
+            builder.ConfigureServices(services =>
+            {
+                var descriptor = services.SingleOrDefault(
+                    d => d.ServiceType == typeof(DbContextOptions<ChronoDbContext>));
+
+                if (descriptor != null)
+                {
+                    services.Remove(descriptor);
+                }
+
+                services.AddDbContext<ChronoDbContext>(options =>
+                {
+                    options.UseInMemoryDatabase("AICTestDb_" + Guid.NewGuid().ToString());
+                });
+
+                services.AddSingleton<ITaskRepository, InMemoryTaskRepository>();
+                services.AddSingleton<IExecutionRepository, InMemoryExecutionRepository>();
+                services.AddSingleton<ISchedulerService, InMemorySchedulerService>();
+                services.AddSingleton<IOpencodeServerManager, InMemoryOpencodeServerManager>();
+                services.AddSingleton<IOpencodeClient, InMemoryOpencodeClient>();
+                services.AddSingleton<IGitService, InMemoryGitService>();
+                services.AddSingleton<ITaskRunner, InMemoryTaskRunner>();
+                services.AddScoped<ScheduledTaskJob>();
+            });
+        });
+
+        _client = _factory.CreateClient();
+        _scope = _factory.Services.CreateScope();
+    }
+
+    public void Dispose()
+    {
+        _scope?.Dispose();
+        _client?.Dispose();
+    }
+
+    [Fact]
+    public async Task Post_AI_CreateTask_Returns201Created()
+    {
+        var request = new
+        {
+            action = "create_task",
+            task = new
+            {
+                name = "AI Test Task",
+                cron = "0 0 * * *",
+                repository = "https://github.com/test/repo",
+                prompt = "AI test prompt"
+            }
+        };
+
+        var response = await _client.PostAsJsonAsync("/api/tasks/ai", request);
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Post_AI_InvalidAction_Returns400()
+    {
+        var request = new
+        {
+            action = "invalid_action"
+        };
+
+        var response = await _client.PostAsJsonAsync("/api/tasks/ai", request);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Post_AI_CreateTask_MissingTaskData_Returns400()
+    {
+        var request = new
+        {
+            action = "create_task",
+            task = (object)null
+        };
+
+        var response = await _client.PostAsJsonAsync("/api/tasks/ai", request);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Post_AI_UpdateTask_MissingTaskId_Returns400()
+    {
+        var request = new
+        {
+            action = "update_task",
+            task = new
+            {
+                name = "Updated Task"
+            }
+        };
+
+        var response = await _client.PostAsJsonAsync("/api/tasks/ai", request);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Post_AI_DeleteTask_MissingTaskId_Returns400()
+    {
+        var request = new
+        {
+            action = "delete_task"
+        };
+
+        var response = await _client.PostAsJsonAsync("/api/tasks/ai", request);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Post_AI_TriggerTask_MissingTaskId_Returns400()
+    {
+        var request = new
+        {
+            action = "trigger_task"
+        };
+
+        var response = await _client.PostAsJsonAsync("/api/tasks/ai", request);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Post_AI_TriggerTask_TaskNotFound_Returns404()
+    {
+        var request = new
+        {
+            action = "trigger_task",
+            task_id = Guid.NewGuid().ToString()
+        };
+
+        var response = await _client.PostAsJsonAsync("/api/tasks/ai", request);
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
 }
 
 public class InMemorySchedulerService : ISchedulerService

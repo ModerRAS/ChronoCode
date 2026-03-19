@@ -118,7 +118,7 @@ public class OpencodeServerManager : IOpencodeServerManager, IDisposable
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to start opencode server");
-            StopServerAsync().Wait();
+            try { StopServerAsync().GetAwaiter().GetResult(); } catch { /* ignore cleanup errors */ }
             throw;
         }
     }

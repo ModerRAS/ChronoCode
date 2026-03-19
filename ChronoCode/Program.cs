@@ -3,6 +3,7 @@ using ChronoCode.Middleware;
 using ChronoCode.Services;
 using ChronoCode.Validators;
 using FluentValidation;
+using FluentValidation.AspNetCore;
 using Hangfire;
 using Hangfire.MemoryStorage;
 using Hangfire.Dashboard;
@@ -10,7 +11,8 @@ using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
 
-builder.Services.AddControllers();
+builder.Services.AddControllers()
+    .AddFluentValidation(v => v.RegisterValidatorsFromAssemblyContaining<CreateTaskDtoValidator>());
 
 builder.Services.AddHangfire(config => config
     .SetDataCompatibilityLevel(CompatibilityLevel.Version_180)
@@ -31,8 +33,6 @@ builder.Services.AddSingleton<IGitService, GitService>();
 builder.Services.AddScoped<ITaskRunner, TaskRunner>();
 builder.Services.AddScoped<ISchedulerService, HangfireSchedulerService>();
 builder.Services.AddScoped<ScheduledTaskJob>();
-
-builder.Services.AddValidatorsFromAssemblyContaining<CreateTaskDtoValidator>();
 
 var app = builder.Build();
 

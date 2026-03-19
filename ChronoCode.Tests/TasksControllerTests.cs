@@ -352,19 +352,18 @@ public class AIControllerTests : IClassFixture<WebApplicationFactory<Program>>, 
     [Fact]
     public async Task Post_AI_CreateTask_Returns201Created()
     {
-        var request = new
-        {
-            action = "create_task",
-            task = new
-            {
-                name = "AI Test Task",
-                cron = "0 0 * * *",
-                repository = "https://github.com/test/repo",
-                prompt = "AI test prompt"
+        var json = @"{
+            ""Action"": ""create_task"",
+            ""Task"": {
+                ""Name"": ""AI Test Task"",
+                ""CronExpression"": ""0 0 * * *"",
+                ""RepositoryUrl"": ""https://github.com/test/repo"",
+                ""Prompt"": ""AI test prompt""
             }
-        };
+        }";
 
-        var response = await _client.PostAsJsonAsync("/api/tasks/ai", request);
+        var content = new StringContent(json, System.Text.Encoding.UTF8, "application/json");
+        var response = await _client.PostAsync("/api/tasks/ai", content);
 
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
     }
@@ -372,12 +371,10 @@ public class AIControllerTests : IClassFixture<WebApplicationFactory<Program>>, 
     [Fact]
     public async Task Post_AI_InvalidAction_Returns400()
     {
-        var request = new
-        {
-            action = "invalid_action"
-        };
+        var json = @"{ ""Action"": ""invalid_action"" }";
 
-        var response = await _client.PostAsJsonAsync("/api/tasks/ai", request);
+        var content = new StringContent(json, System.Text.Encoding.UTF8, "application/json");
+        var response = await _client.PostAsync("/api/tasks/ai", content);
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
@@ -385,13 +382,10 @@ public class AIControllerTests : IClassFixture<WebApplicationFactory<Program>>, 
     [Fact]
     public async Task Post_AI_CreateTask_MissingTaskData_Returns400()
     {
-        var request = new
-        {
-            action = "create_task",
-            task = (object)null
-        };
+        var json = @"{ ""Action"": ""create_task"", ""Task"": null }";
 
-        var response = await _client.PostAsJsonAsync("/api/tasks/ai", request);
+        var content = new StringContent(json, System.Text.Encoding.UTF8, "application/json");
+        var response = await _client.PostAsync("/api/tasks/ai", content);
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
@@ -399,16 +393,15 @@ public class AIControllerTests : IClassFixture<WebApplicationFactory<Program>>, 
     [Fact]
     public async Task Post_AI_UpdateTask_MissingTaskId_Returns400()
     {
-        var request = new
-        {
-            action = "update_task",
-            task = new
-            {
-                name = "Updated Task"
+        var json = @"{
+            ""Action"": ""update_task"",
+            ""Task"": {
+                ""Name"": ""Updated Task""
             }
-        };
+        }";
 
-        var response = await _client.PostAsJsonAsync("/api/tasks/ai", request);
+        var content = new StringContent(json, System.Text.Encoding.UTF8, "application/json");
+        var response = await _client.PostAsync("/api/tasks/ai", content);
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
@@ -416,12 +409,10 @@ public class AIControllerTests : IClassFixture<WebApplicationFactory<Program>>, 
     [Fact]
     public async Task Post_AI_DeleteTask_MissingTaskId_Returns400()
     {
-        var request = new
-        {
-            action = "delete_task"
-        };
+        var json = @"{ ""Action"": ""delete_task"" }";
 
-        var response = await _client.PostAsJsonAsync("/api/tasks/ai", request);
+        var content = new StringContent(json, System.Text.Encoding.UTF8, "application/json");
+        var response = await _client.PostAsync("/api/tasks/ai", content);
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
@@ -429,12 +420,10 @@ public class AIControllerTests : IClassFixture<WebApplicationFactory<Program>>, 
     [Fact]
     public async Task Post_AI_TriggerTask_MissingTaskId_Returns400()
     {
-        var request = new
-        {
-            action = "trigger_task"
-        };
+        var json = @"{ ""Action"": ""trigger_task"" }";
 
-        var response = await _client.PostAsJsonAsync("/api/tasks/ai", request);
+        var content = new StringContent(json, System.Text.Encoding.UTF8, "application/json");
+        var response = await _client.PostAsync("/api/tasks/ai", content);
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
@@ -442,13 +431,10 @@ public class AIControllerTests : IClassFixture<WebApplicationFactory<Program>>, 
     [Fact]
     public async Task Post_AI_TriggerTask_TaskNotFound_Returns404()
     {
-        var request = new
-        {
-            action = "trigger_task",
-            task_id = Guid.NewGuid().ToString()
-        };
+        var json = $@"{{ ""Action"": ""trigger_task"", ""TaskId"": ""{Guid.NewGuid()}"" }}";
 
-        var response = await _client.PostAsJsonAsync("/api/tasks/ai", request);
+        var content = new StringContent(json, System.Text.Encoding.UTF8, "application/json");
+        var response = await _client.PostAsync("/api/tasks/ai", content);
 
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
     }

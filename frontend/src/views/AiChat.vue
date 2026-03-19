@@ -7,7 +7,16 @@
       
       <div class="messages-container" ref="messagesContainer">
         <div v-if="messages.length === 0" class="empty-state">
-          <a-empty description="Start a conversation with the AI" />
+          <div class="welcome-content">
+            <a-avatar size="large" icon="robot" class="welcome-avatar" />
+            <h2>Welcome to AI Chat</h2>
+            <p>Ask me to create, update, delete, or trigger tasks for you.</p>
+            <p class="examples">
+              <span>Try: </span>
+              <a-tag @click="prefillMessage('Create a task to run every Monday at 9am')">Create a task</a-tag>
+              <a-tag @click="prefillMessage('Run task [task-id]')">Run a task</a-tag>
+            </p>
+          </div>
         </div>
         
         <div
@@ -26,6 +35,23 @@
             <div class="message-body">
               <pre v-if="parsedResponses[msg.id]">{{ JSON.stringify(parsedResponses[msg.id], null, 2) }}</pre>
               <pre v-else>{{ msg.content }}</pre>
+            </div>
+            
+            <div v-if="parsedResponses[msg.id] && !confirmedResponses[msg.id]" class="action-buttons">
+              <a-divider />
+              <p class="action-prompt">Would you like me to execute this action?</p>
+              <a-space>
+                <a-button type="primary" @click="confirmAction(msg.id)">Confirm</a-button>
+                <a-button @click="dismissAction(msg.id)">Dismiss</a-button>
+              </a-space>
+            </div>
+            
+            <div v-if="actionResults[msg.id]" :class="['action-result', actionResults[msg.id].success ? 'success' : 'error']">
+              <a-alert
+                :message="actionResults[msg.id].message"
+                :type="actionResults[msg.id].success ? 'success' : 'error'"
+                show-icon
+              />
             </div>
           </div>
         </div>
@@ -58,6 +84,7 @@
 import { ref, reactive, nextTick, watch } from 'vue'
 import { useAIChat } from '../composables/useAIChat'
 import { parseAIResponse, type AIStructuredResponse } from '../utils/aiParser'
+import { executeAIResponse, type ExecuteResult } from '../utils/taskApiIntegration'
 
 const OPENCODE_API_BASE = 'http://localhost:5000/api'
 
@@ -66,6 +93,8 @@ const { messages, isLoading, error, sendMessage } = useAIChat(OPENCODE_API_BASE)
 const inputMessage = ref('')
 const messagesContainer = ref<HTMLElement | null>(null)
 const parsedResponses = reactive<Record<string, AIStructuredResponse | null>>({})
+const confirmedResponses = reactive<Record<string, boolean>>({})
+const actionResults = reactive<Record<string, ExecuteResult>>({})
 
 const handleSend = async () => {
   if (!inputMessage.value.trim()) return
@@ -81,9 +110,31 @@ const handleSend = async () => {
   }
 }
 
+const confirmAction = async (msgId: string) => {
+  const parsed = parsedResponses[msgId]
+  if (!parsed) return
+  
+  confirmedResponses[msgId] = true
+  actionResults[msgId] = { success: false, message: 'Executing...' }
+  
+  const result = await executeAIResponse(parsed)
+  actionResults[msgId] = result
+}
+
+const dismissAction = (msgId: string) => {
+  confirmedResponses[msgId] = true
+  actionResults[msgId] = { success: false, message: 'Action dismissed' }
+}
+
+const prefillMessage = (text: string) => {
+  inputMessage.value = text
+}
+
 const clearChat = () => {
   messages.value = []
   Object.keys(parsedResponses).forEach(key => delete parsedResponses[key])
+  Object.keys(confirmedResponses).forEach(key => delete confirmedResponses[key])
+  Object.keys(actionResults).forEach(key => delete actionResults[key])
 }
 
 const formatTime = (date: Date) => {
@@ -132,6 +183,38 @@ watch(messages, async () => {
   display: flex;
   align-items: center;
   justify-content: center;
+}
+
+.welcome-content {
+  text-align: center;
+  padding: 32px;
+}
+
+.welcome-avatar {
+  background: #722ed1;
+  margin-bottom: 16px;
+}
+
+.welcome-content h2 {
+  margin: 0 0 8px;
+  color: var(--ant-text-color, rgba(0, 0, 0, 0.85));
+}
+
+.welcome-content p {
+  margin: 0 0 12px;
+  color: var(--ant-text-color-secondary, rgba(0, 0, 0, 0.45));
+}
+
+.welcome-content .examples {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.welcome-content .examples span {
+  color: var(--ant-text-color-secondary, rgba(0, 0, 0, 0.45));
 }
 
 .message {
@@ -208,6 +291,20 @@ watch(messages, async () => {
 .message.ai.loading .message-content {
   display: flex;
   align-items: center;
+}
+
+.action-buttons {
+  margin-top: 12px;
+}
+
+.action-prompt {
+  margin: 0 0 8px;
+  font-size: 13px;
+  color: var(--ant-text-color-secondary, rgba(0, 0, 0, 0.45));
+}
+
+.action-result {
+  margin-top: 12px;
 }
 
 .input-container {

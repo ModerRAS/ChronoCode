@@ -46,7 +46,7 @@ public class TasksControllerTests : IClassFixture<WebApplicationFactory<Program>
                 services.AddSingleton<IOpencodeClient, InMemoryOpencodeClient>();
                 services.AddSingleton<IGitService, InMemoryGitService>();
                 services.AddSingleton<ITaskRunner, InMemoryTaskRunner>();
-                services.AddSingleton<ScheduledTaskJob>();
+                services.AddScoped<ScheduledTaskJob>();
 
                 services.AddValidatorsFromAssemblyContaining<CreateTaskDtoValidator>();
             });

@@ -4,7 +4,13 @@
       <a-button type="primary" @click="$router.push('/tasks/new')">Create Task</a-button>
       <a-button @click="loadTasks">Refresh</a-button>
     </div>
-    <a-table :columns="columns" :data-source="tasks" :loading="loading" row-key="id">
+    <a-table 
+      v-if="tasks.length > 0"
+      :columns="columns" 
+      :data-source="tasks" 
+      :loading="loading" 
+      row-key="id"
+    >
       <template #bodyCell="{ column, record }">
         <template v-if="column.key === 'status'">
           <a-tag :color="getStatusColor(record.lastStatus)">
@@ -23,6 +29,13 @@
         </template>
       </template>
     </a-table>
+    <a-empty v-else description="No tasks yet" class="empty-state">
+      <template #image>
+        <a-avatar size="large" icon="robot" class="empty-avatar" />
+      </template>
+      <p>Create your first task to get started</p>
+      <a-button type="primary" @click="$router.push('/tasks/new')">Create Task</a-button>
+    </a-empty>
   </div>
 </template>
 
@@ -85,3 +98,20 @@ const getStatusText = (status: number) => {
 
 onMounted(loadTasks)
 </script>
+
+<style scoped>
+.empty-state {
+  padding: 48px 0;
+  text-align: center;
+}
+
+.empty-avatar {
+  background: #722ed1;
+  margin-bottom: 16px;
+}
+
+.empty-state p {
+  color: var(--ant-text-color-secondary, rgba(0, 0, 0, 0.45));
+  margin-bottom: 16px;
+}
+</style>

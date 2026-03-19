@@ -24,7 +24,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\ChronoCode\ChronoCode.csproj" />
+    <ProjectReference Include="../ChronoCode/ChronoCode.csproj" />
   </ItemGroup>
 
 </Project>

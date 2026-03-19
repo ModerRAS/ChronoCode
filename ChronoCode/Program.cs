@@ -28,9 +28,9 @@ builder.Services.AddScoped<IExecutionRepository, EfExecutionRepository>();
 builder.Services.AddSingleton<IOpencodeServerManager, OpencodeServerManager>();
 builder.Services.AddSingleton<IOpencodeClient, OpencodeClient>();
 builder.Services.AddSingleton<IGitService, GitService>();
-builder.Services.AddSingleton<ITaskRunner, TaskRunner>();
-builder.Services.AddSingleton<ISchedulerService, HangfireSchedulerService>();
-builder.Services.AddSingleton<ScheduledTaskJob>();
+builder.Services.AddScoped<ITaskRunner, TaskRunner>();
+builder.Services.AddScoped<ISchedulerService, HangfireSchedulerService>();
+builder.Services.AddScoped<ScheduledTaskJob>();
 
 builder.Services.AddValidatorsFromAssemblyContaining<CreateTaskDtoValidator>();
 

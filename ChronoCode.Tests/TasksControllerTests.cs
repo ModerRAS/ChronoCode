@@ -1,6 +1,8 @@
+using ChronoCode.Data;
 using ChronoCode.Models;
 using ChronoCode.Models.DTOs;
 using ChronoCode.Services;
+using ChronoCode.Validators;
 using FluentValidation;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
@@ -37,14 +39,14 @@ public class TasksControllerTests : IClassFixture<WebApplicationFactory<Program>
                     options.UseInMemoryDatabase("TestDb_" + Guid.NewGuid().ToString());
                 });
 
-                services.AddScoped<ITaskRepository, InMemoryTaskRepository>();
-                services.AddScoped<IExecutionRepository, InMemoryExecutionRepository>();
+                services.AddSingleton<ITaskRepository, InMemoryTaskRepository>();
+                services.AddSingleton<IExecutionRepository, InMemoryExecutionRepository>();
                 services.AddSingleton<ISchedulerService, InMemorySchedulerService>();
                 services.AddSingleton<IOpencodeServerManager, InMemoryOpencodeServerManager>();
                 services.AddSingleton<IOpencodeClient, InMemoryOpencodeClient>();
                 services.AddSingleton<IGitService, InMemoryGitService>();
                 services.AddSingleton<ITaskRunner, InMemoryTaskRunner>();
-                services.AddSingleton<ScheduledTaskJob>();
+                services.AddScoped<ScheduledTaskJob>();
 
                 services.AddValidatorsFromAssemblyContaining<CreateTaskDtoValidator>();
             });

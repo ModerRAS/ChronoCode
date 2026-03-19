@@ -39,8 +39,8 @@ public class TasksControllerTests : IClassFixture<WebApplicationFactory<Program>
                     options.UseInMemoryDatabase("TestDb_" + Guid.NewGuid().ToString());
                 });
 
-                services.AddScoped<ITaskRepository, InMemoryTaskRepository>();
-                services.AddScoped<IExecutionRepository, InMemoryExecutionRepository>();
+                services.AddSingleton<ITaskRepository, InMemoryTaskRepository>();
+                services.AddSingleton<IExecutionRepository, InMemoryExecutionRepository>();
                 services.AddSingleton<ISchedulerService, InMemorySchedulerService>();
                 services.AddSingleton<IOpencodeServerManager, InMemoryOpencodeServerManager>();
                 services.AddSingleton<IOpencodeClient, InMemoryOpencodeClient>();

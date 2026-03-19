@@ -77,7 +77,7 @@ public class HangfireSchedulerService : ISchedulerService
             .ToList();
 
         return taskIds
-            .Select(id => _taskRepository.GetByIdAsync(id).Result)
+            .Select(id => _taskRepository.GetByIdAsync(id).GetAwaiter().GetResult())
             .Where(t => t != null)
             .Cast<ScheduledTask>()
             .ToList();

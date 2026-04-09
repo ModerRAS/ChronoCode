@@ -6,7 +6,7 @@ import path from 'path'
 export default defineConfig({
   plugins: [vue()],
   // Build output to wwwroot for ASP.NET Core static file serving
-  base: './',
+  base: '/',
   build: {
     outDir: path.resolve(__dirname, '../ChronoCode/wwwroot'),
     emptyOutDir: true,

@@ -37,11 +37,11 @@ public class AIStructuredResponseTests
     [Fact]
     public void AIStructuredResponse_CanSetProperties()
     {
-        var taskDto = new CreateTaskDto
+        var taskDto = new AITaskDto
         {
             Name = "Test Task",
-            CronExpression = "0 9 * * *",
-            RepositoryUrl = "https://github.com/test/repo",
+            Cron = "0 9 * * *",
+            Repository = "https://github.com/test/repo",
             Prompt = "Test prompt"
         };
 

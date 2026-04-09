@@ -10,7 +10,7 @@ public interface ISchedulerService
     void ScheduleTask(ScheduledTask task);
     void UnscheduleTask(Guid taskId);
     void TriggerTask(Guid taskId);
-    List<ScheduledTask> GetScheduledTasks();
+    Task<List<ScheduledTask>> GetScheduledTasksAsync();
     List<DateTime> GetNextRunTimes(Guid taskId, int count = 5);
 }
 
@@ -56,16 +56,13 @@ public class HangfireSchedulerService : ISchedulerService
 
     public void TriggerTask(Guid taskId)
     {
-        var jobId = $"manual_{taskId}_{DateTime.UtcNow:yyyyMMddHHmmss}";
-        
-        BackgroundJob.Enqueue<ScheduledTaskJob>(
-            jobId,
+        var jobId = BackgroundJob.Enqueue<ScheduledTaskJob>(
             job => job.ExecuteAsync(taskId));
 
         _logger.LogInformation("Triggered task {TaskId} with job id: {JobId}", taskId, jobId);
     }
 
-    public List<ScheduledTask> GetScheduledTasks()
+    public async Task<List<ScheduledTask>> GetScheduledTasksAsync()
     {
         using var connection = JobStorage.Current.GetConnection();
         var jobs = connection.GetRecurringJobs();
@@ -76,11 +73,14 @@ public class HangfireSchedulerService : ISchedulerService
             .Select(Guid.Parse)
             .ToList();
 
-        return taskIds
-            .Select(id => _taskRepository.GetByIdAsync(id).Result)
-            .Where(t => t != null)
-            .Cast<ScheduledTask>()
-            .ToList();
+        var result = new List<ScheduledTask>();
+        foreach (var id in taskIds)
+        {
+            var task = await _taskRepository.GetByIdAsync(id);
+            if (task != null)
+                result.Add(task);
+        }
+        return result;
     }
 
     public List<DateTime> GetNextRunTimes(Guid taskId, int count = 5)

@@ -212,7 +212,7 @@ public class InMemorySchedulerService : ISchedulerService
     public void ScheduleTask(ScheduledTask task) { }
     public void UnscheduleTask(Guid taskId) { }
     public void TriggerTask(Guid taskId) { }
-    public List<ScheduledTask> GetScheduledTasks() => new();
+    public Task<List<ScheduledTask>> GetScheduledTasksAsync() => Task.FromResult(new List<ScheduledTask>());
     public List<DateTime> GetNextRunTimes(Guid taskId, int count = 5) => new();
 }
 
@@ -227,6 +227,8 @@ public class InMemoryOpencodeServerManager : IOpencodeServerManager
 
 public class InMemoryOpencodeClient : IOpencodeClient
 {
+    public bool IsServerAvailable() => true;
+
     public Task<string> CreateSessionAsync(string workingDirectory, CancellationToken cancellationToken = default)
         => Task.FromResult("mock-session-id");
     

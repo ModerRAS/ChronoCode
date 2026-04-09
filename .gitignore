@@ -50,6 +50,7 @@ bld/
 Thumbs.db
 
 # Scripts
+*.sh
 dotnet-install.sh
 
 # Sisyphus

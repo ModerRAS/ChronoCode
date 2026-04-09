@@ -66,6 +66,8 @@ public class ChronoDbContext : DbContext
 
         modelBuilder.Entity<TaskLogEntry>(entity =>
         {
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Id).ValueGeneratedNever();
             entity.Property(e => e.Timestamp).HasDefaultValueSql("CURRENT_TIMESTAMP");
             entity.Property(e => e.Level).HasMaxLength(20).HasDefaultValue("Info");
             entity.Property(e => e.Message).IsRequired();

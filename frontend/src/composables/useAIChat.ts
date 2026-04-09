@@ -8,6 +8,18 @@ interface Message {
   timestamp: Date;
 }
 
+function generateId(): string {
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+    return generateId();
+  }
+  // Fallback for older browsers
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === 'x' ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+}
+
 export function useAIChat(opencodeApiBase: string) {
   const messages = ref<Message[]>([]);
   const isLoading = ref(false);
@@ -18,14 +30,14 @@ export function useAIChat(opencodeApiBase: string) {
     error.value = null;
 
     messages.value.push({
-      id: crypto.randomUUID(),
+      id: generateId(),
       role: 'user',
       content,
       timestamp: new Date()
     });
 
     try {
-      const response = await fetch(`${opencodeApiBase}/message`, {
+      const response = await fetch(`${opencodeApiBase}/ai/message`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ message: content })
@@ -34,7 +46,7 @@ export function useAIChat(opencodeApiBase: string) {
       const data = await response.text();
       
       messages.value.push({
-        id: crypto.randomUUID(),
+        id: generateId(),
         role: 'ai',
         content: data,
         timestamp: new Date()

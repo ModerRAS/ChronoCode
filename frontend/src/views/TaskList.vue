@@ -22,7 +22,7 @@
         </template>
         <template v-if="column.key === 'actions'">
           <a-space>
-            <a-button size="small" @click="$router.push(`/tasks/${record.id}`)">View</a-button>
+            <a-button size="small" @click="$router.push(`/tasks/${record.id}/edit`)">Edit</a-button>
             <a-button size="small" type="primary" @click="triggerTask(record.id)">Run</a-button>
             <a-button size="small" danger @click="deleteTask(record.id)">Delete</a-button>
           </a-space>

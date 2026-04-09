@@ -24,7 +24,7 @@ public class UpdateTaskDtoValidator : AbstractValidator<UpdateTaskDto>
             .When(x => x.Prompt != null);
     }
 
-    private static bool BeValidCronExpression(string cronExpression)
+    private static bool BeValidCronExpression(string? cronExpression)
     {
         if (string.IsNullOrWhiteSpace(cronExpression))
             return true;
@@ -33,7 +33,7 @@ public class UpdateTaskDtoValidator : AbstractValidator<UpdateTaskDto>
         return parts.Length == 5;
     }
 
-    private static bool BeValidUrl(string url)
+    private static bool BeValidUrl(string? url)
     {
         if (string.IsNullOrWhiteSpace(url))
             return true;

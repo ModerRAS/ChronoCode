@@ -54,3 +54,6 @@ dotnet-install.sh
 
 # Sisyphus
 .sisyphus/
+
+# Playwright
+.playwright-mcp/

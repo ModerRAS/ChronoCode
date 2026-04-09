@@ -2,7 +2,10 @@
   <div>
     <a-page-header title="Task Details" @back="$router.push('/')">
       <template #extra>
-        <a-button type="primary" @click="triggerTask" :loading="triggering">Run Now</a-button>
+        <a-space>
+          <a-button @click="$router.push(`/tasks/${taskId}/edit`)">Edit</a-button>
+          <a-button type="primary" @click="triggerTask" :loading="triggering">Run Now</a-button>
+        </a-space>
       </template>
     </a-page-header>
     

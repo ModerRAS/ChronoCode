@@ -6,6 +6,7 @@ namespace ChronoCode.Services;
 
 public interface IOpencodeClient
 {
+    bool IsServerAvailable();
     Task<string> CreateSessionAsync(string workingDirectory, CancellationToken cancellationToken = default);
     Task<string> SendPromptAsync(string sessionId, string prompt, string workingDirectory, CancellationToken cancellationToken = default);
     Task<string> SendPromptWithStreamingAsync(string sessionId, string prompt, string workingDirectory, Func<string, Task> onChunk, CancellationToken cancellationToken = default);
@@ -17,16 +18,16 @@ public interface IOpencodeClient
 
 public class OpencodeClient : IOpencodeClient
 {
-    private readonly HttpClient _httpClient;
+    private readonly IHttpClientFactory _httpClientFactory;
     private readonly IOpencodeServerManager _serverManager;
     private readonly ILogger<OpencodeClient> _logger;
     private readonly JsonSerializerOptions _jsonOptions;
 
-    public OpencodeClient(IOpencodeServerManager serverManager, ILogger<OpencodeClient> logger)
+    public OpencodeClient(IHttpClientFactory httpClientFactory, IOpencodeServerManager serverManager, ILogger<OpencodeClient> logger)
     {
+        _httpClientFactory = httpClientFactory;
         _serverManager = serverManager;
         _logger = logger;
-        _httpClient = new HttpClient();
         _jsonOptions = new JsonSerializerOptions
         {
             PropertyNameCaseInsensitive = true
@@ -34,6 +35,11 @@ public class OpencodeClient : IOpencodeClient
     }
 
     private string BaseUrl => _serverManager.ServerUrl;
+
+    public bool IsServerAvailable()
+    {
+        return _serverManager.IsServerRunning;
+    }
 
     private void AddDirectoryHeader(HttpRequestMessage request, string directory)
     {
@@ -45,7 +51,7 @@ public class OpencodeClient : IOpencodeClient
         var request = new HttpRequestMessage(HttpMethod.Post, $"{BaseUrl}/session");
         AddDirectoryHeader(request, workingDirectory);
 
-        var response = await _httpClient.SendAsync(request, cancellationToken);
+        var response = await _httpClientFactory.CreateClient("Opencode").SendAsync(request, cancellationToken);
         response.EnsureSuccessStatusCode();
 
         var json = await response.Content.ReadAsStringAsync(cancellationToken);
@@ -73,7 +79,7 @@ public class OpencodeClient : IOpencodeClient
 
         request.Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json");
 
-        var response = await _httpClient.SendAsync(request, cancellationToken);
+        var response = await _httpClientFactory.CreateClient("Opencode").SendAsync(request, cancellationToken);
         response.EnsureSuccessStatusCode();
 
         var json = await response.Content.ReadAsStringAsync(cancellationToken);
@@ -101,16 +107,17 @@ public class OpencodeClient : IOpencodeClient
 
         request.Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json");
 
-        using var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+        using var response = await _httpClientFactory.CreateClient("Opencode").SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
         response.EnsureSuccessStatusCode();
 
         var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
         using var reader = new StreamReader(stream);
         var fullResponse = new StringBuilder();
 
-        while (!reader.EndOfStream && !cancellationToken.IsCancellationRequested)
+        while (!cancellationToken.IsCancellationRequested)
         {
             var line = await reader.ReadLineAsync(cancellationToken);
+            if (line == null) break;
             if (!string.IsNullOrWhiteSpace(line))
             {
                 await onChunk(line);
@@ -130,7 +137,7 @@ public class OpencodeClient : IOpencodeClient
         }
 
         var request = new HttpRequestMessage(HttpMethod.Get, url);
-        var response = await _httpClient.SendAsync(request, cancellationToken);
+        var response = await _httpClientFactory.CreateClient("Opencode").SendAsync(request, cancellationToken);
         response.EnsureSuccessStatusCode();
 
         var json = await response.Content.ReadAsStringAsync(cancellationToken);
@@ -142,14 +149,14 @@ public class OpencodeClient : IOpencodeClient
     public async Task AbortSessionAsync(string sessionId, CancellationToken cancellationToken = default)
     {
         var request = new HttpRequestMessage(HttpMethod.Post, $"{BaseUrl}/session/{sessionId}/abort");
-        var response = await _httpClient.SendAsync(request, cancellationToken);
+        var response = await _httpClientFactory.CreateClient("Opencode").SendAsync(request, cancellationToken);
         response.EnsureSuccessStatusCode();
     }
 
     public async Task<List<SessionInfo>> ListSessionsAsync(CancellationToken cancellationToken = default)
     {
         var request = new HttpRequestMessage(HttpMethod.Get, $"{BaseUrl}/session");
-        var response = await _httpClient.SendAsync(request, cancellationToken);
+        var response = await _httpClientFactory.CreateClient("Opencode").SendAsync(request, cancellationToken);
         response.EnsureSuccessStatusCode();
 
         var json = await response.Content.ReadAsStringAsync(cancellationToken);
@@ -161,7 +168,7 @@ public class OpencodeClient : IOpencodeClient
     public async Task<SessionInfo?> GetSessionAsync(string sessionId, CancellationToken cancellationToken = default)
     {
         var request = new HttpRequestMessage(HttpMethod.Get, $"{BaseUrl}/session/{sessionId}");
-        var response = await _httpClient.SendAsync(request, cancellationToken);
+        var response = await _httpClientFactory.CreateClient("Opencode").SendAsync(request, cancellationToken);
 
         if (!response.IsSuccessStatusCode)
             return null;

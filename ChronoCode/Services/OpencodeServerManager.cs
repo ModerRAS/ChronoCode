@@ -16,6 +16,7 @@ public class OpencodeServerManager : IOpencodeServerManager, IDisposable
 {
     private readonly ILogger<OpencodeServerManager> _logger;
     private readonly IConfiguration _configuration;
+    private readonly IHttpClientFactory _httpClientFactory;
     private Process? _serverProcess;
     private CancellationTokenSource? _cts;
     private bool _isRunning;
@@ -28,10 +29,11 @@ public class OpencodeServerManager : IOpencodeServerManager, IDisposable
     private string? Password => _configuration["Opencode:Password"];
     private string? Username => _configuration["Opencode:Username"];
 
-    public OpencodeServerManager(ILogger<OpencodeServerManager> logger, IConfiguration configuration)
+    public OpencodeServerManager(ILogger<OpencodeServerManager> logger, IConfiguration configuration, IHttpClientFactory httpClientFactory)
     {
         _logger = logger;
         _configuration = configuration;
+        _httpClientFactory = httpClientFactory;
     }
 
     public async Task StartServerAsync(CancellationToken cancellationToken = default)
@@ -118,7 +120,7 @@ public class OpencodeServerManager : IOpencodeServerManager, IDisposable
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to start opencode server");
-            StopServerAsync().Wait();
+            await StopServerAsync();
             throw;
         }
     }
@@ -130,7 +132,7 @@ public class OpencodeServerManager : IOpencodeServerManager, IDisposable
 
     private async Task<bool> WaitForServerReadyAsync(TimeSpan timeout, CancellationToken cancellationToken)
     {
-        var client = new HttpClient();
+        using var client = _httpClientFactory.CreateClient("OpencodeServer");
         var endTime = DateTime.UtcNow + timeout;
 
         while (DateTime.UtcNow < endTime)
@@ -188,6 +190,7 @@ public class OpencodeServerManager : IOpencodeServerManager, IDisposable
 
     public void Dispose()
     {
-        StopServerAsync().Wait();
+        // Use GetAwaiter().GetResult() to avoid deadlock while still being synchronous
+        StopServerAsync().GetAwaiter().GetResult();
     }
 }

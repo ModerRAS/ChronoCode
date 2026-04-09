@@ -86,7 +86,7 @@ import { useAIChat } from '../composables/useAIChat'
 import { parseAIResponse, type AIStructuredResponse } from '../utils/aiParser'
 import { executeAIResponse, type ExecuteResult } from '../utils/taskApiIntegration'
 
-const OPENCODE_API_BASE = 'http://localhost:5000/api'
+const OPENCODE_API_BASE = '/api'
 
 const { messages, isLoading, error, sendMessage } = useAIChat(OPENCODE_API_BASE)
 

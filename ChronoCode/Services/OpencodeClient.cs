@@ -38,7 +38,19 @@ public class OpencodeClient : IOpencodeClient
 
     public bool IsServerAvailable()
     {
-        return _serverManager.IsServerRunning;
+        if (!_serverManager.IsServerRunning)
+        {
+            return false;
+        }
+
+        try
+        {
+            return _serverManager.WaitForServerReadyAsync(TimeSpan.FromSeconds(1)).GetAwaiter().GetResult();
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private void AddDirectoryHeader(HttpRequestMessage request, string directory)

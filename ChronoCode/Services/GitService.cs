@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using System.Net.Http.Headers;
 using LibGit2Sharp;
 
 namespace ChronoCode.Services;
@@ -149,10 +150,7 @@ public class GitService : IGitService
 
         if (string.IsNullOrEmpty(_githubToken))
         {
-            var (fallbackOwner, fallbackRepo) = ExtractOwnerAndRepoParts(repoPath);
-            var fallbackUrl = $"https://github.com/{fallbackOwner}/{fallbackRepo}/pull/new/{branchName}";
-            _logger.LogWarning("GitHub token not configured. Returning fallback URL: {Url}", fallbackUrl);
-            return fallbackUrl;
+            throw new InvalidOperationException("GitHub:Token is required to create pull requests.");
         }
 
         var (owner, repo) = ExtractOwnerAndRepoParts(repoPath);
@@ -167,9 +165,9 @@ public class GitService : IGitService
         };
 
         using var client = _httpClientFactory.CreateClient("GitHub");
-        client.DefaultRequestHeaders.Add("Authorization", $"Bearer {_githubToken}");
-        client.DefaultRequestHeaders.Add("Accept", "application/vnd.github.v3+json");
-        client.DefaultRequestHeaders.Add("User-Agent", "ChronoCode");
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _githubToken);
+        client.DefaultRequestHeaders.Accept.Clear();
+        client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github.v3+json"));
 
         var content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
         var response = await client.PostAsync(apiUrl, content);
@@ -212,21 +210,41 @@ public class GitService : IGitService
     {
         using var repo = new Repository(repoPath);
         var remote = repo.Network.Remotes["origin"];
-        if (remote == null) return ("owner", "repo");
-
-        var url = remote.Url;
-        if (url.EndsWith(".git"))
-            url = url[..^4];
-
-        if (url.Contains("github.com/"))
+        if (remote == null)
         {
-            var repoPathStr = url.Split("github.com/").Last();
-            var segments = repoPathStr.Split('/');
-            if (segments.Length >= 2)
-                return (segments[0], segments[1]);
+            throw new InvalidOperationException("Git remote 'origin' is not configured.");
         }
 
-        return ("owner", "repo");
+        var url = remote.Url;
+        if (url.EndsWith(".git", StringComparison.OrdinalIgnoreCase))
+        {
+            url = url[..^4];
+        }
+
+        string? githubPath = null;
+
+        if (Uri.TryCreate(url, UriKind.Absolute, out var uri)
+            && string.Equals(uri.Host, "github.com", StringComparison.OrdinalIgnoreCase))
+        {
+            githubPath = uri.AbsolutePath.Trim('/');
+        }
+        else if (url.StartsWith("git@github.com:", StringComparison.OrdinalIgnoreCase))
+        {
+            githubPath = url["git@github.com:".Length..];
+        }
+
+        if (string.IsNullOrWhiteSpace(githubPath))
+        {
+            throw new InvalidOperationException($"Unsupported git remote format: {remote.Url}");
+        }
+
+        var segments = githubPath.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        if (segments.Length < 2)
+        {
+            throw new InvalidOperationException($"Unable to parse GitHub owner and repo from remote: {remote.Url}");
+        }
+
+        return (segments[0], segments[1]);
     }
 }
 

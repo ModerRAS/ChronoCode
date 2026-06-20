@@ -21,7 +21,7 @@ public class OpencodeServerManager : IOpencodeServerManager, IDisposable
     private CancellationTokenSource? _cts;
     private bool _isRunning;
 
-    public bool IsServerRunning => _isRunning;
+    public bool IsServerRunning => _isRunning && _serverProcess is { HasExited: false };
     public string ServerUrl => $"http://{Host}:{Port}";
 
     private string Host => _configuration["Opencode:Host"] ?? "127.0.0.1";
@@ -161,7 +161,7 @@ public class OpencodeServerManager : IOpencodeServerManager, IDisposable
 
     public async Task StopServerAsync()
     {
-        if (!_isRunning || _serverProcess == null)
+        if (_serverProcess == null)
         {
             return;
         }
@@ -171,8 +171,11 @@ public class OpencodeServerManager : IOpencodeServerManager, IDisposable
         try
         {
             _cts?.Cancel();
-            _serverProcess.Kill(true);
-            await _serverProcess.WaitForExitAsync();
+            if (!_serverProcess.HasExited)
+            {
+                _serverProcess.Kill(true);
+                await _serverProcess.WaitForExitAsync();
+            }
         }
         catch (Exception ex)
         {

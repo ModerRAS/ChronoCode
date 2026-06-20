@@ -80,13 +80,15 @@ cd ChronoCode
 }
 ```
 
-### 3. 启动后端
+### 3. 启动应用
 ```bash
 cd ChronoCode
 dotnet run
 ```
 
-### 4. 启动前端
+首次构建或后续 `dotnet build` / `dotnet test` 会自动执行前端打包，并将静态资源输出到 `ChronoCode/wwwroot`。
+
+### 4. 前端开发模式（可选）
 ```bash
 cd frontend
 npm install
@@ -94,8 +96,9 @@ npm run dev
 ```
 
 ### 5. 访问
-- 前端: http://localhost:5173
-- Hangfire Dashboard: http://localhost:5000/hangfire
+- 应用首页: http://localhost:5242
+- Hangfire Dashboard: http://localhost:5242/hangfire
+- 前端开发服务器: http://localhost:5173
 
 ## 技术栈
 

@@ -72,11 +72,18 @@ var app = builder.Build();
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<ChronoDbContext>();
-    await db.Database.EnsureCreatedAsync();
+    if (db.Database.IsRelational())
+    {
+        await db.Database.MigrateAsync();
+    }
+    else
+    {
+        await db.Database.EnsureCreatedAsync();
+    }
 }
 
-app.UseCors();
 app.UseRouting();
+app.UseCors();
 
 app.UseExceptionHandling();
 
@@ -96,7 +103,18 @@ app.MapControllers();
 
 app.MapGet("/health", () => Results.Ok(new { Status = "Healthy", Timestamp = DateTime.UtcNow }));
 
-app.MapFallbackToFile("index.html");
+app.MapFallback(async context =>
+{
+    if (context.Request.Path.StartsWithSegments("/api"))
+    {
+        context.Response.StatusCode = StatusCodes.Status404NotFound;
+        return;
+    }
+
+    context.Response.ContentType = "text/html; charset=utf-8";
+    await context.Response.SendFileAsync(
+        Path.Combine(builder.Environment.ContentRootPath, "wwwroot", "index.html"));
+});
 
 app.Run();
 

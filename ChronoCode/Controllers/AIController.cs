@@ -2,6 +2,8 @@ using ChronoCode.Models;
 using ChronoCode.Models.AI;
 using ChronoCode.Models.DTOs;
 using ChronoCode.Services;
+using FluentValidation;
+using FluentValidation.Results;
 using Microsoft.AspNetCore.Mvc;
 
 namespace ChronoCode.Controllers;
@@ -14,26 +16,38 @@ public class AIController : ControllerBase
     private readonly ISchedulerService _schedulerService;
     private readonly ILogger<AIController> _logger;
     private readonly IOpencodeClient _opencodeClient;
+    private readonly IValidator<ChatMessageRequest> _chatMessageRequestValidator;
+    private readonly IValidator<CreateTaskDto> _createTaskValidator;
+    private readonly IValidator<UpdateTaskDto> _updateTaskValidator;
 
     public AIController(
         ITaskRepository taskRepository,
         ISchedulerService schedulerService,
         ILogger<AIController> logger,
-        IOpencodeClient opencodeClient)
+        IOpencodeClient opencodeClient,
+        IValidator<ChatMessageRequest> chatMessageRequestValidator,
+        IValidator<CreateTaskDto> createTaskValidator,
+        IValidator<UpdateTaskDto> updateTaskValidator)
     {
         _taskRepository = taskRepository;
         _schedulerService = schedulerService;
         _logger = logger;
         _opencodeClient = opencodeClient;
+        _chatMessageRequestValidator = chatMessageRequestValidator;
+        _createTaskValidator = createTaskValidator;
+        _updateTaskValidator = updateTaskValidator;
     }
 
     [HttpPost("message")]
     public async Task<IActionResult> HandleChatMessage([FromBody] ChatMessageRequest request)
     {
-        if (string.IsNullOrWhiteSpace(request.Message))
+        var requestValidation = await _chatMessageRequestValidator.ValidateAsync(request);
+        if (!requestValidation.IsValid)
         {
-            return BadRequest(new { error = new { code = "VALIDATION_ERROR", message = "Message is required" } });
+            return ValidationError(requestValidation);
         }
+
+        var tempPath = Path.Combine(Path.GetTempPath(), "chronocode-chat", Guid.NewGuid().ToString());
 
         try
         {
@@ -42,7 +56,6 @@ public class AIController : ControllerBase
                 return StatusCode(503, new { error = new { code = "SERVER_UNAVAILABLE", message = "AI server is not available. Please start the server first." } });
             }
 
-            var tempPath = Path.Combine(Path.GetTempPath(), "chronocode-chat", Guid.NewGuid().ToString());
             Directory.CreateDirectory(tempPath);
 
             var sessionId = await _opencodeClient.CreateSessionAsync(tempPath);
@@ -96,7 +109,10 @@ If the user just wants information or help, respond with a JSON containing:
                     return Ok(structuredResponse);
                 }
             }
-            catch { }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "Failed to parse AI JSON response. Payload: {Response}", response);
+            }
 
             return Ok(new Models.AI.AIStructuredResponse 
             { 
@@ -110,7 +126,21 @@ If the user just wants information or help, respond with a JSON containing:
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error handling chat message");
-            return StatusCode(500, new { error = new { code = "INTERNAL_ERROR", message = ex.Message } });
+            return StatusCode(500, new { error = new { code = "INTERNAL_ERROR", message = "An unexpected error occurred while processing your request." } });
+        }
+        finally
+        {
+            try
+            {
+                if (Directory.Exists(tempPath))
+                {
+                    Directory.Delete(tempPath, recursive: true);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to clean up AI temp directory {TempPath}", tempPath);
+            }
         }
     }
 
@@ -145,6 +175,12 @@ If the user just wants information or help, respond with a JSON containing:
         }
 
         var createDto = dto.ToCreateTaskDto();
+        var validationResult = await _createTaskValidator.ValidateAsync(createDto);
+        if (!validationResult.IsValid)
+        {
+            return ValidationError(validationResult);
+        }
+
         var task = await _taskRepository.CreateAsync(createDto);
         _logger.LogInformation("AI created task {TaskId}: {TaskName}", task.Id, task.Name);
         return CreatedAtAction(nameof(TasksController.GetTask), "Tasks", new { id = task.Id }, new { id = task.Id, name = task.Name });
@@ -176,6 +212,12 @@ If the user just wants information or help, respond with a JSON containing:
             RequirePlanReview = createDto.RequirePlanReview,
             IsEnabled = createDto.IsEnabled
         };
+
+        var validationResult = await _updateTaskValidator.ValidateAsync(updateDto);
+        if (!validationResult.IsValid)
+        {
+            return ValidationError(validationResult);
+        }
 
         var task = await _taskRepository.UpdateAsync(taskId.Value, updateDto);
         _logger.LogInformation("AI updated task {TaskId}", taskId);
@@ -215,5 +257,17 @@ If the user just wants information or help, respond with a JSON containing:
         _schedulerService.TriggerTask(taskId.Value);
         _logger.LogInformation("AI triggered task {TaskId}", taskId);
         return Accepted(new { message = "Task triggered", taskId });
+    }
+
+    private BadRequestObjectResult ValidationError(ValidationResult validationResult)
+    {
+        return BadRequest(new
+        {
+            error = new
+            {
+                code = "VALIDATION_ERROR",
+                message = string.Join("; ", validationResult.Errors.Select(e => e.ErrorMessage))
+            }
+        });
     }
 }

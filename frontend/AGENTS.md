@@ -6,7 +6,7 @@
 
 ## STRUCTURE
 
-```
+```text
 frontend/
 ├── src/
 │   ├── views/          # Route-level page components

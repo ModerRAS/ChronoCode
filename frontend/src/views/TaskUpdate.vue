@@ -116,7 +116,7 @@ const loadTask = async () => {
     form.maxFileChanges = task.maxFileChanges
     form.requirePlanReview = task.requirePlanReview
     form.isEnabled = task.isEnabled
-  } catch (e) {
+  } catch {
     message.error('Failed to load task')
     router.push('/')
   }
@@ -129,7 +129,7 @@ const onSubmit = async () => {
     await taskApi.update(taskId, form)
     message.success('Task updated successfully')
     router.push('/')
-  } catch (e) {
+  } catch {
     message.error('Failed to update task')
   }
   submitting.value = false

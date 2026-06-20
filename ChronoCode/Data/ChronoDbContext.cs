@@ -57,6 +57,11 @@ public class ChronoDbContext : DbContext
             entity.HasIndex(e => e.Status);
             entity.HasIndex(e => e.StartedAt);
 
+            entity.HasOne<ScheduledTask>()
+                  .WithMany()
+                  .HasForeignKey(e => e.TaskId)
+                  .OnDelete(DeleteBehavior.Cascade);
+
             entity.Property(e => e.Logs)
                   .HasConversion(
                       v => System.Text.Json.JsonSerializer.Serialize(v, (System.Text.Json.JsonSerializerOptions?)null),

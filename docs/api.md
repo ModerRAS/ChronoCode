@@ -223,7 +223,7 @@ ChronoCode 提供 RESTful API 用于管理定时任务。API 基于 JSON 格式�
 
 ### AI 聊天
 
-**POST** `/api/tasks/message`
+**POST** `/api/ai/message`
 
 通过自然语言与AI对话，AI会返回结构化的任务管理响应。
 
@@ -258,7 +258,7 @@ ChronoCode 提供 RESTful API 用于管理定时任务。API 基于 JSON 格式�
 
 ### AI 创建/管理任务 (Structured Response)
 
-**POST** `/api/tasks/ai`
+**POST** `/api/ai/ai`
 
 接收 opencode 返回的结构化 JSON 响应并执行相应操作。
 

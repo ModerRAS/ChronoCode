@@ -4,7 +4,7 @@
 
 ## STRUCTURE
 
-```
+```text
 ChronoCode/
 ├── Controllers/           # REST endpoints (TasksController, AIController)
 ├── Services/             # Business logic (Hangfire, Git, AI, TaskRunner)

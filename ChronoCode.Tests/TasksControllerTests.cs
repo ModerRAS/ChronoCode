@@ -6,7 +6,9 @@ using ChronoCode.Validators;
 using FluentValidation;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
 using System.Net;
 using System.Net.Http.Json;
@@ -26,13 +28,10 @@ public class TasksControllerTests : IClassFixture<WebApplicationFactory<Program>
         {
             builder.ConfigureServices(services =>
             {
-                var descriptor = services.SingleOrDefault(
-                    d => d.ServiceType == typeof(DbContextOptions<ChronoDbContext>));
-
-                if (descriptor != null)
-                {
-                    services.Remove(descriptor);
-                }
+                services.RemoveAll<ChronoDbContext>();
+                services.RemoveAll<DbContextOptions<ChronoDbContext>>();
+                services.RemoveAll<DbContextOptions>();
+                services.RemoveAll<IDbContextOptionsConfiguration<ChronoDbContext>>();
 
                 services.AddDbContext<ChronoDbContext>(options =>
                 {
@@ -202,6 +201,22 @@ public class TasksControllerTests : IClassFixture<WebApplicationFactory<Program>
     public async Task Delete_DeleteTask_Returns404_WhenNotExists()
     {
         var response = await _client.DeleteAsync($"/api/tasks/{Guid.NewGuid()}");
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Get_UnknownApiRoute_Returns404_WhenPathStartsWithApi()
+    {
+        var response = await _client.GetAsync("/api/does-not-exist");
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Get_UnknownStaticAsset_Returns404_WhenFileIsMissing()
+    {
+        var response = await _client.GetAsync("/assets/does-not-exist.js");
 
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
     }

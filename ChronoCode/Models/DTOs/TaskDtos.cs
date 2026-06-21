@@ -93,6 +93,28 @@ public class ExecutionDto
     public string? ErrorMessage { get; set; }
 }
 
+public class ExecutionSessionDto
+{
+    public Guid ExecutionId { get; set; }
+    public string? Backend { get; set; }
+    public string? SessionId { get; set; }
+    public string? SessionFile { get; set; }
+    public string? WorkingDirectory { get; set; }
+    public bool IsLive { get; set; }
+    public bool SupportsPersistentSessions { get; set; }
+    public bool SupportsSupplementalMessages { get; set; }
+    public bool CanResume { get; set; }
+}
+
+public class ExecutionMessageDto
+{
+    [Required]
+    public string Message { get; set; } = string.Empty;
+
+    [MaxLength(20)]
+    public string Mode { get; set; } = "steer";
+}
+
 public class LogDto
 {
     public DateTime Timestamp { get; set; }

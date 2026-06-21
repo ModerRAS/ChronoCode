@@ -43,6 +43,9 @@ public class TasksControllerTests : IClassFixture<WebApplicationFactory<Program>
                 services.AddSingleton<ISchedulerService, InMemorySchedulerService>();
                 services.AddSingleton<IOpencodeServerManager, InMemoryOpencodeServerManager>();
                 services.AddSingleton<IOpencodeClient, InMemoryOpencodeClient>();
+                services.AddSingleton<OpencodeRuntime>();
+                services.AddSingleton<PiRuntime>();
+                services.AddSingleton<IAgentRuntime, InMemoryAgentRuntime>();
                 services.AddSingleton<IGitService, InMemoryGitService>();
                 services.AddSingleton<ITaskRunner, InMemoryTaskRunner>();
                 services.AddScoped<ScheduledTaskJob>();
@@ -57,8 +60,8 @@ public class TasksControllerTests : IClassFixture<WebApplicationFactory<Program>
 
     public void Dispose()
     {
-        _scope?.Dispose();
-        _client?.Dispose();
+        _scope.Dispose();
+        _client.Dispose();
     }
 
     [Fact]
@@ -316,6 +319,49 @@ public class TasksControllerTests : IClassFixture<WebApplicationFactory<Program>
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
+
+    [Fact]
+    public async Task Get_ExecutionSession_ReturnsLiveSession()
+    {
+        var executionRepository = _scope.ServiceProvider.GetRequiredService<IExecutionRepository>();
+        var execution = await executionRepository.CreateAsync(Guid.NewGuid());
+
+        var response = await _client.GetAsync($"/api/tasks/executions/{execution.Id}/session");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        var session = await response.Content.ReadFromJsonAsync<ExecutionSessionDto>();
+        Assert.NotNull(session);
+        Assert.True(session.IsLive);
+        Assert.True(session.SupportsSupplementalMessages);
+        Assert.Equal("mock-session", session.SessionId);
+    }
+
+    [Fact]
+    public async Task Post_ExecutionMessage_QueuesSupplementalMessage()
+    {
+        var executionRepository = _scope.ServiceProvider.GetRequiredService<IExecutionRepository>();
+        var execution = await executionRepository.CreateAsync(Guid.NewGuid());
+
+        var response = await _client.PostAsJsonAsync(
+            $"/api/tasks/executions/{execution.Id}/message",
+            new ExecutionMessageDto { Message = "Keep going", Mode = "steer" });
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        var payload = await response.Content.ReadFromJsonAsync<ExecutionMessageResponse>();
+        Assert.NotNull(payload);
+        Assert.Equal("queued", payload.Result);
+    }
+}
+
+public class ExecutionMessageResponse
+{
+    public Guid ExecutionId { get; set; }
+    public string Mode { get; set; } = string.Empty;
+    public string Result { get; set; } = string.Empty;
+    public string? SessionId { get; set; }
+    public string? SessionFile { get; set; }
 }
 
 public class InMemorySchedulerService : ISchedulerService
@@ -403,4 +449,24 @@ public class InMemoryTaskRunner : ITaskRunner
         };
         return Task.FromResult(execution);
     }
+}
+
+public class InMemoryAgentRuntime : IAgentRuntime
+{
+    public AgentRuntimeStatus GetStatus() => new("pi", true, null, true, true, true);
+
+    public Task EnsureReadyAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+    public Task StopAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+    public Task<AgentExecutionSession> EnsureExecutionSessionAsync(Guid executionId, string workingDirectory, Func<string, Task> onChunk, string? sessionRef = null, CancellationToken cancellationToken = default)
+        => Task.FromResult(new AgentExecutionSession("pi", "mock-session", "mock-session-file", workingDirectory, true));
+
+    public Task<string> SendMessageAsync(Guid executionId, string workingDirectory, string prompt, AgentMessageMode mode, Func<string, Task> onChunk, CancellationToken cancellationToken = default)
+        => Task.FromResult(mode == AgentMessageMode.Prompt ? "mock prompt result" : "queued");
+
+    public Task<AgentExecutionSession?> GetExecutionSessionAsync(Guid executionId, CancellationToken cancellationToken = default)
+        => Task.FromResult<AgentExecutionSession?>(new AgentExecutionSession("pi", "mock-session", "mock-session-file", "/tmp/mock", true));
+
+    public Task StopExecutionAsync(Guid executionId, CancellationToken cancellationToken = default) => Task.CompletedTask;
 }

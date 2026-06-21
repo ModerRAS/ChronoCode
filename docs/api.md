@@ -315,6 +315,61 @@ ChronoCode 提供 RESTful API 用于管理定时任务。API 基于 JSON 格式�
 
 ---
 
+## 执行会话 API
+
+### 获取执行绑定的 agent 会话
+
+**GET** `/api/tasks/executions/{executionId}/session`
+
+**Response** (200 OK):
+```json
+{
+  "executionId": "uuid",
+  "backend": "pi",
+  "sessionId": "abc123",
+  "sessionFile": "C:/Users/.../session.jsonl",
+  "workingDirectory": "C:/workspaces/...",
+  "isLive": true,
+  "supportsPersistentSessions": true,
+  "supportsSupplementalMessages": true,
+  "canResume": true
+}
+```
+
+当执行后端不支持持久会话或当前 execution 已无 live session 时，`isLive` 为 `false`，`sessionId` / `sessionFile` 可能为空。
+
+---
+
+### 向运行中的 agent 追加消息
+
+**POST** `/api/tasks/executions/{executionId}/message`
+
+**Request Body**:
+```json
+{
+  "message": "继续修复剩余测试",
+  "mode": "steer"
+}
+```
+
+`mode` 支持：
+- `prompt`: 立即发一个正常 prompt（要求当前 execution 有 live session）
+- `steer`: 在运行中插入一条 steering message
+- `follow_up`: 当前执行完成后再处理
+
+**Response** (200 OK):
+```json
+{
+  "executionId": "uuid",
+  "mode": "Steer",
+  "result": "queued",
+  "sessionId": "abc123",
+  "sessionFile": "C:/Users/.../session.jsonl"
+}
+```
+
+---
+
 ## 服务器管理 API
 
 ### 获取服务器状态
@@ -324,8 +379,11 @@ ChronoCode 提供 RESTful API 用于管理定时任务。API 基于 JSON 格式�
 **Response** (200 OK):
 ```json
 {
+  "backend": "pi",
   "running": true,
-  "url": "http://127.0.0.1:4096"
+  "url": null,
+  "supportsPersistentSessions": true,
+  "supportsSupplementalMessages": true
 }
 ```
 
@@ -338,7 +396,10 @@ ChronoCode 提供 RESTful API 用于管理定时任务。API 基于 JSON 格式�
 **Response** (200 OK):
 ```json
 {
-  "url": "http://127.0.0.1:4096"
+  "backend": "pi",
+  "url": null,
+  "supportsPersistentSessions": true,
+  "supportsSupplementalMessages": true
 }
 ```
 

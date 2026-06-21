@@ -12,20 +12,20 @@ public class TasksController : ControllerBase
     private readonly ITaskRepository _taskRepository;
     private readonly ISchedulerService _schedulerService;
     private readonly IExecutionRepository _executionRepository;
-    private readonly IOpencodeServerManager _serverManager;
+    private readonly IAgentRuntime _agentRuntime;
     private readonly ILogger<TasksController> _logger;
 
     public TasksController(
         ITaskRepository taskRepository,
         ISchedulerService schedulerService,
         IExecutionRepository executionRepository,
-        IOpencodeServerManager serverManager,
+        IAgentRuntime agentRuntime,
         ILogger<TasksController> logger)
     {
         _taskRepository = taskRepository;
         _schedulerService = schedulerService;
         _executionRepository = executionRepository;
-        _serverManager = serverManager;
+        _agentRuntime = agentRuntime;
         _logger = logger;
     }
 
@@ -123,13 +123,103 @@ public class TasksController : ControllerBase
         }).ToList());
     }
 
+    [HttpGet("executions/{executionId:guid}/session")]
+    public async Task<ActionResult<ExecutionSessionDto>> GetExecutionSession(Guid executionId)
+    {
+        var execution = await _executionRepository.GetByIdAsync(executionId);
+        if (execution == null)
+        {
+            return NotFound();
+        }
+
+        var session = await _agentRuntime.GetExecutionSessionAsync(executionId);
+        var status = _agentRuntime.GetStatus();
+
+        if (session == null)
+        {
+            return Ok(new ExecutionSessionDto
+            {
+                ExecutionId = executionId,
+                Backend = status.Backend,
+                IsLive = false,
+                SupportsPersistentSessions = status.SupportsPersistentSessions,
+                SupportsSupplementalMessages = status.SupportsSupplementalMessages,
+                CanResume = false
+            });
+        }
+
+        return Ok(new ExecutionSessionDto
+        {
+            ExecutionId = executionId,
+            Backend = session.Backend,
+            SessionId = session.SessionId,
+            SessionFile = session.SessionFile,
+            WorkingDirectory = session.WorkingDirectory,
+            IsLive = true,
+            SupportsPersistentSessions = status.SupportsPersistentSessions,
+            SupportsSupplementalMessages = session.SupportsSupplementalMessages,
+            CanResume = !string.IsNullOrWhiteSpace(session.SessionId) || !string.IsNullOrWhiteSpace(session.SessionFile)
+        });
+    }
+
+    [HttpPost("executions/{executionId:guid}/message")]
+    public async Task<IActionResult> SendExecutionMessage(Guid executionId, [FromBody] ExecutionMessageDto dto)
+    {
+        if (string.IsNullOrWhiteSpace(dto.Message))
+        {
+            return BadRequest(new { Error = "Message is required." });
+        }
+
+        var execution = await _executionRepository.GetByIdAsync(executionId);
+        if (execution == null)
+        {
+            return NotFound();
+        }
+
+        var session = await _agentRuntime.GetExecutionSessionAsync(executionId);
+        if (session == null)
+        {
+            return Conflict(new { Error = "Execution has no live agent session." });
+        }
+
+        var mode = dto.Mode.Trim().ToLowerInvariant() switch
+        {
+            "prompt" => AgentMessageMode.Prompt,
+            "follow_up" or "followup" => AgentMessageMode.FollowUp,
+            _ => AgentMessageMode.Steer
+        };
+
+        var result = await _agentRuntime.SendMessageAsync(
+            executionId,
+            session.WorkingDirectory,
+            dto.Message,
+            mode,
+            chunk => _executionRepository.AddLogAsync(executionId, "Debug", chunk),
+            HttpContext.RequestAborted);
+
+        await _executionRepository.AddLogAsync(executionId, "Info", $"Queued supplemental message ({mode})", dto.Message);
+
+        return Ok(new
+        {
+            ExecutionId = executionId,
+            Mode = mode.ToString(),
+            Result = result,
+            SessionId = session.SessionId,
+            SessionFile = session.SessionFile
+        });
+    }
+
     [HttpGet("server/status")]
     public async Task<ActionResult> GetServerStatus()
     {
+        var status = _agentRuntime.GetStatus();
         return Ok(new
         {
-            Running = _serverManager.IsServerRunning,
-            Url = _serverManager.ServerUrl
+            Backend = status.Backend,
+            Running = status.IsReady,
+            Url = status.Endpoint,
+            SupportsPersistentSessions = status.SupportsPersistentSessions,
+            SupportsSupplementalMessages = status.SupportsSupplementalMessages
         });
     }
 
@@ -138,9 +228,15 @@ public class TasksController : ControllerBase
     {
         try
         {
-            await _serverManager.StartServerAsync();
-            await _serverManager.WaitForServerReadyAsync(TimeSpan.FromSeconds(30));
-            return Ok(new { Url = _serverManager.ServerUrl });
+            await _agentRuntime.EnsureReadyAsync();
+            var status = _agentRuntime.GetStatus();
+            return Ok(new
+            {
+                Backend = status.Backend,
+                Url = status.Endpoint,
+                SupportsPersistentSessions = status.SupportsPersistentSessions,
+                SupportsSupplementalMessages = status.SupportsSupplementalMessages
+            });
         }
         catch (Exception ex)
         {
@@ -151,7 +247,7 @@ public class TasksController : ControllerBase
     [HttpPost("server/stop")]
     public async Task<IActionResult> StopServer()
     {
-        await _serverManager.StopServerAsync();
+        await _agentRuntime.StopAsync();
         return Ok();
     }
 

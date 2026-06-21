@@ -1,3 +1,4 @@
+using System.Text.Json;
 using ChronoCode.Models.AI;
 using ChronoCode.Models.DTOs;
 using Xunit;
@@ -35,25 +36,44 @@ public class AIStructuredResponseTests
     }
 
     [Fact]
-    public void AIStructuredResponse_CanSetProperties()
+    public void AIStructuredResponse_SerializesAndDeserializes_SnakeCaseContract()
     {
-        var taskDto = new CreateTaskDto
-        {
-            Name = "Test Task",
-            CronExpression = "0 9 * * *",
-            RepositoryUrl = "https://github.com/test/repo",
-            Prompt = "Test prompt"
-        };
+        const string json = """
+            {
+              "action": "create_task",
+              "task_id": null,
+              "task": {
+                "name": "Test Task",
+                "cron": "0 9 * * *",
+                "repository": "https://github.com/test/repo",
+                "base_branch": "main",
+                "branch_strategy": "reuse",
+                "prompt": "Test prompt",
+                "max_runtime_seconds": 120,
+                "max_file_changes": 7,
+                "require_plan_review": false,
+                "is_enabled": true
+              },
+              "error": null
+            }
+            """;
 
-        var response = new AIStructuredResponse
-        {
-            Action = AIActions.CreateTask,
-            Task = taskDto
-        };
+        var response = JsonSerializer.Deserialize<AIStructuredResponse>(json);
 
+        Assert.NotNull(response);
         Assert.Equal("create_task", response.Action);
+        Assert.Null(response.TaskId);
         Assert.NotNull(response.Task);
-        Assert.Equal("Test Task", response.Task.Name);
+        Assert.Equal("reuse", response.Task.BranchStrategy);
+        Assert.Equal(120, response.Task.MaxRuntimeSeconds);
+
+        var serialized = JsonSerializer.Serialize(response);
+
+        Assert.Contains("\"task_id\":null", serialized);
+        Assert.Contains("\"base_branch\":\"main\"", serialized);
+        Assert.Contains("\"branch_strategy\":\"reuse\"", serialized);
+        Assert.DoesNotContain("\"TaskId\"", serialized);
+        Assert.DoesNotContain("\"BaseBranch\"", serialized);
     }
 
     [Fact]

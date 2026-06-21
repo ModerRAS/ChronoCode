@@ -221,9 +221,58 @@ ChronoCode 提供 RESTful API 用于管理定时任务。API 基于 JSON 格式�
 
 ## AI API
 
-### AI 创建/管理任务
+### AI 聊天
 
-**POST** `/api/tasks/ai`
+**POST** `/api/ai/message`
+
+通过自然语言与AI对话，AI会返回结构化的任务管理响应。
+
+**Request Body**:
+```json
+{
+  "message": "创建一个每周一凌晨2点检查TODO的任务，仓库地址是 https://github.com/owner/repo"
+}
+```
+
+**Response** (200 OK):
+```json
+{
+  "action": "create_task",
+  "task_id": null,
+  "task": {
+    "name": "Weekly TODO Check",
+    "cron": "0 2 * * 1",
+    "repository": "https://github.com/owner/repo",
+    "base_branch": "main",
+    "branch_strategy": "new",
+    "prompt": "检查并整理项目中的TODO注释",
+    "max_runtime_seconds": 600,
+    "max_file_changes": 50,
+    "require_plan_review": true,
+    "is_enabled": true
+  },
+  "error": null
+}
+```
+
+**Response** (200 OK, info/no-op):
+```json
+{
+  "action": "",
+  "task_id": null,
+  "task": null,
+  "error": {
+    "code": "INFO",
+    "message": "这是一个帮助性回答，不会执行任何任务操作"
+  }
+}
+```
+
+---
+
+### AI 创建/管理任务 (Structured Response)
+
+**POST** `/api/ai/ai`
 
 接收 opencode 返回的结构化 JSON 响应并执行相应操作。
 
@@ -231,12 +280,13 @@ ChronoCode 提供 RESTful API 用于管理定时任务。API 基于 JSON 格式�
 ```json
 {
   "action": "create_task",
-  "taskId": null,
+  "task_id": null,
   "task": {
     "name": "Weekly TODO Check",
     "cron": "0 2 * * 1",
     "repository": "https://github.com/owner/repo",
     "base_branch": "main",
+    "branch_strategy": "new",
     "prompt": "检查项目中的TODO注释并整理",
     "max_runtime_seconds": 600,
     "max_file_changes": 50,
@@ -251,9 +301,9 @@ ChronoCode 提供 RESTful API 用于管理定时任务。API 基于 JSON 格式�
 | Action | 说明 | 必需字段 |
 |--------|------|----------|
 | create_task | 创建新任务 | task |
-| update_task | 更新任务 | taskId + task |
-| delete_task | 删除任务 | taskId |
-| trigger_task | 触发任务执行 | taskId |
+| update_task | 更新任务 | task_id + task |
+| delete_task | 删除任务 | task_id |
+| trigger_task | 触发任务执行 | task_id |
 
 **Response** (201 Created for create_task):
 ```json
@@ -336,6 +386,7 @@ opencode AI 应输出以下 JSON 格式：
     "cron": "0 2 * * 1",
     "repository": "https://github.com/owner/repo",
     "base_branch": "main",
+    "branch_strategy": "new",
     "prompt": "具体要AI做的事情",
     "max_runtime_seconds": 600,
     "max_file_changes": 50,

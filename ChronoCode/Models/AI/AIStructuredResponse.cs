@@ -1,21 +1,99 @@
-using ChronoCode.Models.DTOs;
+using System.Text.Json.Serialization;
 
 namespace ChronoCode.Models.AI;
 
+/// <summary>
+/// DTO for AI-structured task creation request
+/// Uses snake_case field names to match what AI returns
+/// </summary>
 public class AIStructuredResponse
 {
+    [JsonPropertyName("action")]
     public string Action { get; set; } = string.Empty;
+
+    [JsonPropertyName("task_id")]
     public Guid? TaskId { get; set; }
-    public CreateTaskDto? Task { get; set; }
+
+    [JsonPropertyName("task")]
+    public AITaskDto? Task { get; set; }
+
+    [JsonPropertyName("error")]
     public AIError? Error { get; set; }
 }
 
+/// <summary>
+/// Task DTO with snake_case fields (as returned by AI)
+/// </summary>
+public class AITaskDto
+{
+    [JsonPropertyName("name")]
+    public string Name { get; set; } = string.Empty;
+
+    [JsonPropertyName("cron")]
+    public string Cron { get; set; } = string.Empty;
+
+    [JsonPropertyName("repository")]
+    public string Repository { get; set; } = string.Empty;
+
+    [JsonPropertyName("base_branch")]
+    public string BaseBranch { get; set; } = "main";
+
+    [JsonPropertyName("branch_strategy")]
+    public string BranchStrategy { get; set; } = "new";
+
+    [JsonPropertyName("prompt")]
+    public string Prompt { get; set; } = string.Empty;
+
+    [JsonPropertyName("max_runtime_seconds")]
+    public int MaxRuntimeSeconds { get; set; } = 600;
+
+    [JsonPropertyName("max_file_changes")]
+    public int MaxFileChanges { get; set; } = 50;
+
+    [JsonPropertyName("require_plan_review")]
+    public bool RequirePlanReview { get; set; } = true;
+
+    [JsonPropertyName("is_enabled")]
+    public bool IsEnabled { get; set; } = true;
+
+    /// <summary>
+    /// Convert AI response DTO to CreateTaskDto
+    /// </summary>
+    public DTOs.CreateTaskDto ToCreateTaskDto()
+    {
+        return new DTOs.CreateTaskDto
+        {
+            Name = Name,
+            CronExpression = Cron,
+            RepositoryUrl = Repository,
+            BaseBranch = BaseBranch,
+            BranchStrategy = BranchStrategy?.ToLower() == "reuse" 
+                ? Models.BranchStrategy.Reuse 
+                : Models.BranchStrategy.New,
+            Prompt = Prompt,
+            MaxRuntimeSeconds = MaxRuntimeSeconds,
+            MaxFileChanges = MaxFileChanges,
+            RequirePlanReview = RequirePlanReview,
+            IsEnabled = IsEnabled
+        };
+    }
+}
+
+/// <summary>
+/// Error info returned by AI
+/// </summary>
 public class AIError
 {
+    [JsonPropertyName("code")]
     public string Code { get; set; } = string.Empty;
+
+    [JsonPropertyName("message")]
     public string Message { get; set; } = string.Empty;
 }
 
+/// <summary>
+/// Action constants for AI responses
+/// </summary>
 public static class AIActions
 {
     public const string CreateTask = "create_task";

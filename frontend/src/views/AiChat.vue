@@ -37,7 +37,7 @@
               <pre v-else>{{ msg.content }}</pre>
             </div>
             
-            <div v-if="parsedResponses[msg.id] && !confirmedResponses[msg.id]" class="action-buttons">
+            <div v-if="isActionableAIResponse(parsedResponses[msg.id]) && !confirmedResponses[msg.id]" class="action-buttons">
               <a-divider />
               <p class="action-prompt">Would you like me to execute this action?</p>
               <a-space>
@@ -83,10 +83,14 @@
 <script setup lang="ts">
 import { ref, reactive, nextTick, watch } from 'vue'
 import { useAIChat } from '../composables/useAIChat'
-import { parseAIResponse, type AIStructuredResponse } from '../utils/aiParser'
+import {
+  isActionableAIResponse,
+  parseAIResponse,
+  type AIStructuredResponse,
+} from '../utils/aiParser'
 import { executeAIResponse, type ExecuteResult } from '../utils/taskApiIntegration'
 
-const OPENCODE_API_BASE = 'http://localhost:5000/api'
+const OPENCODE_API_BASE = '/api'
 
 const { messages, isLoading, error, sendMessage } = useAIChat(OPENCODE_API_BASE)
 
@@ -112,7 +116,7 @@ const handleSend = async () => {
 
 const confirmAction = async (msgId: string) => {
   const parsed = parsedResponses[msgId]
-  if (!parsed) return
+  if (!isActionableAIResponse(parsed)) return
   
   confirmedResponses[msgId] = true
   actionResults[msgId] = { success: false, message: 'Executing...' }

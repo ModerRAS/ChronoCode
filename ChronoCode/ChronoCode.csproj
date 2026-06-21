@@ -21,4 +21,9 @@
     <PackageReference Include="FluentValidation.AspNetCore" Version="11.3.0" />
   </ItemGroup>
 
+  <Target Name="BuildFrontend" BeforeTargets="Build">
+    <Exec Command="npm install" WorkingDirectory="../frontend" Condition="!Exists('../frontend/node_modules')" />
+    <Exec Command="npm run build" WorkingDirectory="../frontend" />
+  </Target>
+
 </Project>

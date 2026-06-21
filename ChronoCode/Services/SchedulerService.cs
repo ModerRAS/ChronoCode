@@ -56,10 +56,7 @@ public class HangfireSchedulerService : ISchedulerService
 
     public void TriggerTask(Guid taskId)
     {
-        var jobId = $"manual_{taskId}_{DateTime.UtcNow:yyyyMMddHHmmss}";
-        
-        BackgroundJob.Enqueue<ScheduledTaskJob>(
-            jobId,
+        var jobId = BackgroundJob.Enqueue<ScheduledTaskJob>(
             job => job.ExecuteAsync(taskId));
 
         _logger.LogInformation("Triggered task {TaskId} with job id: {JobId}", taskId, jobId);

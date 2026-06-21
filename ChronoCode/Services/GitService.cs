@@ -1,3 +1,6 @@
+using System.Text;
+using System.Text.Json;
+using System.Net.Http.Headers;
 using LibGit2Sharp;
 
 namespace ChronoCode.Services;
@@ -16,10 +19,14 @@ public interface IGitService
 public class GitService : IGitService
 {
     private readonly ILogger<GitService> _logger;
+    private readonly IHttpClientFactory _httpClientFactory;
+    private readonly string? _githubToken;
 
-    public GitService(ILogger<GitService> logger)
+    public GitService(ILogger<GitService> logger, IHttpClientFactory httpClientFactory, IConfiguration configuration)
     {
         _logger = logger;
+        _httpClientFactory = httpClientFactory;
+        _githubToken = configuration["GitHub:Token"];
     }
 
     public async Task<string> CloneRepositoryAsync(string repoUrl, string workspacePath)
@@ -119,7 +126,20 @@ public class GitService : IGitService
             var branch = repo.Head;
             var refSpec = $"refs/heads/{branch.FriendlyName}:refs/heads/{branch.FriendlyName}";
 
-            repo.Network.Push(repo.Head, new PushOptions());
+            var pushOptions = new PushOptions();
+            
+            if (!string.IsNullOrEmpty(_githubToken))
+            {
+                var credentials = new UsernamePasswordCredentials
+                {
+                    Username = "x-access-token",
+                    Password = _githubToken
+                };
+                
+                pushOptions.CredentialsProvider = (_, _, _) => credentials;
+            }
+
+            repo.Network.Push(remote, refSpec, pushOptions);
             _logger.LogInformation("Changes pushed successfully");
         });
     }
@@ -128,12 +148,42 @@ public class GitService : IGitService
     {
         _logger.LogInformation("Creating pull request for {Branch} -> {Base}", branchName, baseBranch);
 
-        return await Task.Run(() =>
+        if (string.IsNullOrEmpty(_githubToken))
         {
-            var prUrl = $"https://github.com/{ExtractOwnerAndRepo(repoPath)}/pull/new/{branchName}";
-            _logger.LogInformation("GitHub API not integrated - returning mock PR URL: {Url}", prUrl);
-            return prUrl;
-        });
+            throw new InvalidOperationException("GitHub:Token is required to create pull requests.");
+        }
+
+        var (owner, repo) = ExtractOwnerAndRepoParts(repoPath);
+        var apiUrl = $"https://api.github.com/repos/{owner}/{repo}/pulls";
+
+        var payload = new
+        {
+            title,
+            body,
+            @base = baseBranch,
+            head = branchName
+        };
+
+        using var client = _httpClientFactory.CreateClient("GitHub");
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _githubToken);
+        client.DefaultRequestHeaders.Accept.Clear();
+        client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github.v3+json"));
+
+        var content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
+        var response = await client.PostAsync(apiUrl, content);
+
+        if (!response.IsSuccessStatusCode)
+        {
+            var error = await response.Content.ReadAsStringAsync();
+            throw new Exception($"Failed to create PR: {error}");
+        }
+
+        var json = await response.Content.ReadAsStringAsync();
+        using var doc = JsonDocument.Parse(json);
+        var prUrl = doc.RootElement.GetProperty("html_url").GetString() ?? $"https://github.com/{owner}/{repo}/pull/new/{branchName}";
+
+        _logger.LogInformation("Pull request created: {PrUrl}", prUrl);
+        return prUrl;
     }
 
     public async Task<List<GitFileStatus>> GetChangedFilesAsync(string repoPath)
@@ -156,20 +206,45 @@ public class GitService : IGitService
         });
     }
 
-    private string ExtractOwnerAndRepo(string repoPath)
+    private (string owner, string repo) ExtractOwnerAndRepoParts(string repoPath)
     {
         using var repo = new Repository(repoPath);
         var remote = repo.Network.Remotes["origin"];
-        if (remote == null) return "owner/repo";
+        if (remote == null)
+        {
+            throw new InvalidOperationException("Git remote 'origin' is not configured.");
+        }
 
         var url = remote.Url;
-        if (url.EndsWith(".git"))
+        if (url.EndsWith(".git", StringComparison.OrdinalIgnoreCase))
+        {
             url = url[..^4];
+        }
 
-        if (url.Contains("github.com/"))
-            return url.Split("github.com/").Last();
+        string? githubPath = null;
 
-        return "owner/repo";
+        if (Uri.TryCreate(url, UriKind.Absolute, out var uri)
+            && string.Equals(uri.Host, "github.com", StringComparison.OrdinalIgnoreCase))
+        {
+            githubPath = uri.AbsolutePath.Trim('/');
+        }
+        else if (url.StartsWith("git@github.com:", StringComparison.OrdinalIgnoreCase))
+        {
+            githubPath = url["git@github.com:".Length..];
+        }
+
+        if (string.IsNullOrWhiteSpace(githubPath))
+        {
+            throw new InvalidOperationException($"Unsupported git remote format: {remote.Url}");
+        }
+
+        var segments = githubPath.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        if (segments.Length < 2)
+        {
+            throw new InvalidOperationException($"Unable to parse GitHub owner and repo from remote: {remote.Url}");
+        }
+
+        return (segments[0], segments[1]);
     }
 }
 

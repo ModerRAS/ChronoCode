@@ -8,11 +8,26 @@ using Hangfire;
 using Hangfire.MemoryStorage;
 using Hangfire.Dashboard;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.FileProviders;
 
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddControllers()
-    .AddFluentValidation(v => v.RegisterValidatorsFromAssemblyContaining<CreateTaskDtoValidator>());
+    .AddFluentValidation(v => v.RegisterValidatorsFromAssemblyContaining<CreateTaskDtoValidator>())
+    .AddJsonOptions(options =>
+    {
+        options.JsonSerializerOptions.PropertyNameCaseInsensitive = true;
+    });
+
+builder.Services.AddCors(options =>
+{
+    options.AddDefaultPolicy(policy =>
+    {
+        policy.AllowAnyOrigin()
+              .AllowAnyMethod()
+              .AllowAnyHeader();
+    });
+});
 
 builder.Services.AddHangfire(config => config
     .SetDataCompatibilityLevel(CompatibilityLevel.Version_180)
@@ -34,27 +49,88 @@ builder.Services.AddScoped<ITaskRunner, TaskRunner>();
 builder.Services.AddScoped<ISchedulerService, HangfireSchedulerService>();
 builder.Services.AddScoped<ScheduledTaskJob>();
 
+builder.Services.AddHttpClient("Opencode", client =>
+{
+    client.Timeout = TimeSpan.FromMinutes(5);
+});
+
+builder.Services.AddHttpClient("OpencodeServer", client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(35);
+});
+
+builder.Services.AddHttpClient("GitHub", client =>
+{
+    client.BaseAddress = new Uri("https://api.github.com");
+    client.DefaultRequestHeaders.Add("User-Agent", "ChronoCode");
+});
 var app = builder.Build();
 
+// Ensure database is created
+using (var scope = app.Services.CreateScope())
+{
+    var db = scope.ServiceProvider.GetRequiredService<ChronoDbContext>();
+    if (db.Database.IsRelational())
+    {
+        await db.Database.MigrateAsync();
+    }
+    else
+    {
+        await db.Database.EnsureCreatedAsync();
+    }
+}
+
 app.UseRouting();
+app.UseCors();
 
 app.UseExceptionHandling();
 
+app.UseDefaultFiles();
+app.UseStaticFiles(new StaticFileOptions
+{
+    FileProvider = new PhysicalFileProvider(
+        Path.Combine(builder.Environment.ContentRootPath, "wwwroot")),
+});
+
 app.UseHangfireDashboard("/hangfire", new DashboardOptions
 {
-    Authorization = new[] { new HangfireAuthFilter() }
+    Authorization = new[] { new HangfireAuthFilter(app.Environment) }
 });
 
 app.MapControllers();
 
 app.MapGet("/health", () => Results.Ok(new { Status = "Healthy", Timestamp = DateTime.UtcNow }));
 
+app.MapFallback(async context =>
+{
+    if (context.Request.Path.StartsWithSegments("/api"))
+    {
+        context.Response.StatusCode = StatusCodes.Status404NotFound;
+        return;
+    }
+
+    context.Response.ContentType = "text/html; charset=utf-8";
+    await context.Response.SendFileAsync(
+        Path.Combine(builder.Environment.ContentRootPath, "wwwroot", "index.html"));
+});
+
 app.Run();
 
 public class HangfireAuthFilter : IDashboardAuthorizationFilter
 {
+    private readonly IHostEnvironment _environment;
+    
+    public HangfireAuthFilter(IHostEnvironment environment)
+    {
+        _environment = environment;
+    }
+    
     public bool Authorize(DashboardContext context)
     {
-        return true;
+        if (_environment.IsDevelopment())
+            return true;
+            
+        var httpContext = context.GetHttpContext();
+        return httpContext?.User?.Identity?.IsAuthenticated ?? false;
     }
 }

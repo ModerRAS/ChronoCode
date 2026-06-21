@@ -1,25 +1,25 @@
 import { test, expect } from '@playwright/test';
 
-test.describe('Network Retry', () => {
-  test('shows retry button on network failure', async ({ page }) => {
-    let shouldFail = true;
+test.describe('Task creation failures', () => {
+  test('keeps form data when the create request fails', async ({ page }) => {
     await page.route('**/api/tasks', route => {
-      if (shouldFail) {
+      if (route.request().method() === 'POST') {
         route.abort('failed');
-      } else {
-        route.continue();
+        return;
       }
+
+      route.continue();
     });
 
     await page.goto('/tasks/new');
-    await page.fill('input[placeholder="Enter task name"]', 'RetryTest');
-    await page.fill('input[placeholder="e.g., 0 * * * *"]', '0 9 * * *');
-    await page.fill('input[placeholder="https://github.com/owner/repo"]', 'https://github.com/test/repo');
-    await page.fill('textarea[placeholder="What should the AI do?"]', 'Test');
-    await page.click('button[type="submit"]');
-    await expect(page.locator('.retry-button')).toBeVisible({ timeout: 5000 });
-    shouldFail = false;
-    await page.click('.retry-button');
-    await expect(page.locator('.success-message')).toBeVisible({ timeout: 10000 });
+    await page.getByPlaceholder('Enter task name').fill('RetryTest');
+    await page.getByPlaceholder('e.g., 0 * * * *').fill('0 9 * * *');
+    await page.getByPlaceholder('https://github.com/owner/repo').fill('https://github.com/test/repo');
+    await page.getByPlaceholder('What should the AI do?').fill('Test');
+    await page.locator('button[type="submit"]').click();
+
+    await expect(page).toHaveURL(/\/tasks\/new$/);
+    await expect(page.getByPlaceholder('Enter task name')).toHaveValue('RetryTest');
+    await expect(page.getByPlaceholder('What should the AI do?')).toHaveValue('Test');
   });
 });

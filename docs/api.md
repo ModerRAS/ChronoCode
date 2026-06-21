@@ -238,19 +238,33 @@ ChronoCode 提供 RESTful API 用于管理定时任务。API 基于 JSON 格式�
 ```json
 {
   "action": "create_task",
-  "taskId": null,
+  "task_id": null,
   "task": {
     "name": "Weekly TODO Check",
     "cron": "0 2 * * 1",
     "repository": "https://github.com/owner/repo",
-    "baseBranch": "main",
+    "base_branch": "main",
+    "branch_strategy": "new",
     "prompt": "检查并整理项目中的TODO注释",
-    "maxRuntimeSeconds": 600,
-    "maxFileChanges": 50,
-    "requirePlanReview": true,
-    "isEnabled": true
+    "max_runtime_seconds": 600,
+    "max_file_changes": 50,
+    "require_plan_review": true,
+    "is_enabled": true
   },
   "error": null
+}
+```
+
+**Response** (200 OK, info/no-op):
+```json
+{
+  "action": "",
+  "task_id": null,
+  "task": null,
+  "error": {
+    "code": "INFO",
+    "message": "这是一个帮助性回答，不会执行任何任务操作"
+  }
 }
 ```
 
@@ -266,12 +280,13 @@ ChronoCode 提供 RESTful API 用于管理定时任务。API 基于 JSON 格式�
 ```json
 {
   "action": "create_task",
-  "taskId": null,
+  "task_id": null,
   "task": {
     "name": "Weekly TODO Check",
     "cron": "0 2 * * 1",
     "repository": "https://github.com/owner/repo",
     "base_branch": "main",
+    "branch_strategy": "new",
     "prompt": "检查项目中的TODO注释并整理",
     "max_runtime_seconds": 600,
     "max_file_changes": 50,
@@ -286,9 +301,9 @@ ChronoCode 提供 RESTful API 用于管理定时任务。API 基于 JSON 格式�
 | Action | 说明 | 必需字段 |
 |--------|------|----------|
 | create_task | 创建新任务 | task |
-| update_task | 更新任务 | taskId + task |
-| delete_task | 删除任务 | taskId |
-| trigger_task | 触发任务执行 | taskId |
+| update_task | 更新任务 | task_id + task |
+| delete_task | 删除任务 | task_id |
+| trigger_task | 触发任务执行 | task_id |
 
 **Response** (201 Created for create_task):
 ```json
@@ -371,6 +386,7 @@ opencode AI 应输出以下 JSON 格式：
     "cron": "0 2 * * 1",
     "repository": "https://github.com/owner/repo",
     "base_branch": "main",
+    "branch_strategy": "new",
     "prompt": "具体要AI做的事情",
     "max_runtime_seconds": 600,
     "max_file_changes": 50,

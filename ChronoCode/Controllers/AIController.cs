@@ -79,6 +79,7 @@ Respond ONLY with a JSON object in this format:
     ""cron"": ""cron expression (e.g., 0 2 * * *)"",
     ""repository"": ""https://github.com/owner/repo"",
     ""base_branch"": ""main"",
+    ""branch_strategy"": ""new|reuse"",
     ""prompt"": ""what the AI should do"",
     ""max_runtime_seconds"": 600,
     ""max_file_changes"": 50,

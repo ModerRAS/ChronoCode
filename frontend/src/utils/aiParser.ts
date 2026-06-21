@@ -1,29 +1,46 @@
 import { z } from 'zod';
 
 const CreateTaskSchema = z.object({
-  name: z.string().min(1, "Name is required").max(100),
-  cron: z.string().min(1, "Cron is required"),
-  repository: z.string().url("Invalid repository URL"),
-  base_branch: z.string().optional().default("main"),
-  prompt: z.string().min(1, "Prompt is required"),
+  name: z.string().min(1, 'Name is required').max(100),
+  cron: z.string().min(1, 'Cron is required'),
+  repository: z.string().url('Invalid repository URL'),
+  base_branch: z.string().optional().default('main'),
+  branch_strategy: z.enum(['new', 'reuse']).optional().default('new'),
+  prompt: z.string().min(1, 'Prompt is required'),
   max_runtime_seconds: z.number().optional().default(600),
   max_file_changes: z.number().optional().default(50),
   require_plan_review: z.boolean().optional().default(true),
   is_enabled: z.boolean().optional().default(true),
 });
 
-export const AIStructuredResponseSchema = z.object({
-  action: z.enum(['create_task', 'update_task', 'delete_task', 'trigger_task']),
-  task_id: z.string().uuid().optional(),
-  task: CreateTaskSchema.optional(),
-  error: z.object({
-    code: z.string(),
-    message: z.string()
-  }).optional()
+const AIErrorSchema = z.object({
+  code: z.string(),
+  message: z.string(),
 });
 
-export type AIStructuredResponse = z.infer<typeof AIStructuredResponseSchema>;
+export const ActionableAIStructuredResponseSchema = z.object({
+  action: z.enum(['create_task', 'update_task', 'delete_task', 'trigger_task']),
+  task_id: z.string().uuid().nullable().optional(),
+  task: CreateTaskSchema.nullable().optional(),
+  error: AIErrorSchema.nullable().optional(),
+});
+
+export const InfoAIStructuredResponseSchema = z.object({
+  action: z.literal(''),
+  task_id: z.null().optional(),
+  task: z.null(),
+  error: AIErrorSchema,
+});
+
+export const AIStructuredResponseSchema = z.union([
+  ActionableAIStructuredResponseSchema,
+  InfoAIStructuredResponseSchema,
+]);
+
 export type CreateTaskInput = z.infer<typeof CreateTaskSchema>;
+export type ActionableAIStructuredResponse = z.infer<typeof ActionableAIStructuredResponseSchema>;
+export type InfoAIStructuredResponse = z.infer<typeof InfoAIStructuredResponseSchema>;
+export type AIStructuredResponse = z.infer<typeof AIStructuredResponseSchema>;
 
 export function parseAIResponse(text: string): AIStructuredResponse | null {
   try {
@@ -34,4 +51,10 @@ export function parseAIResponse(text: string): AIStructuredResponse | null {
   } catch {
     return null;
   }
+}
+
+export function isActionableAIResponse(
+  response: AIStructuredResponse | null | undefined,
+): response is ActionableAIStructuredResponse {
+  return !!response && response.action !== '';
 }

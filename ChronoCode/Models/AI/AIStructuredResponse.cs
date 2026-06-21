@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace ChronoCode.Models.AI;
 
 /// <summary>
@@ -6,9 +8,16 @@ namespace ChronoCode.Models.AI;
 /// </summary>
 public class AIStructuredResponse
 {
+    [JsonPropertyName("action")]
     public string Action { get; set; } = string.Empty;
+
+    [JsonPropertyName("task_id")]
     public Guid? TaskId { get; set; }
+
+    [JsonPropertyName("task")]
     public AITaskDto? Task { get; set; }
+
+    [JsonPropertyName("error")]
     public AIError? Error { get; set; }
 }
 
@@ -17,15 +26,34 @@ public class AIStructuredResponse
 /// </summary>
 public class AITaskDto
 {
+    [JsonPropertyName("name")]
     public string Name { get; set; } = string.Empty;
+
+    [JsonPropertyName("cron")]
     public string Cron { get; set; } = string.Empty;
+
+    [JsonPropertyName("repository")]
     public string Repository { get; set; } = string.Empty;
+
+    [JsonPropertyName("base_branch")]
     public string BaseBranch { get; set; } = "main";
-    public string BranchStrategy { get; set; } = "New";
+
+    [JsonPropertyName("branch_strategy")]
+    public string BranchStrategy { get; set; } = "new";
+
+    [JsonPropertyName("prompt")]
     public string Prompt { get; set; } = string.Empty;
+
+    [JsonPropertyName("max_runtime_seconds")]
     public int MaxRuntimeSeconds { get; set; } = 600;
+
+    [JsonPropertyName("max_file_changes")]
     public int MaxFileChanges { get; set; } = 50;
+
+    [JsonPropertyName("require_plan_review")]
     public bool RequirePlanReview { get; set; } = true;
+
+    [JsonPropertyName("is_enabled")]
     public bool IsEnabled { get; set; } = true;
 
     /// <summary>
@@ -56,7 +84,10 @@ public class AITaskDto
 /// </summary>
 public class AIError
 {
+    [JsonPropertyName("code")]
     public string Code { get; set; } = string.Empty;
+
+    [JsonPropertyName("message")]
     public string Message { get; set; } = string.Empty;
 }
 

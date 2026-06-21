@@ -1,8 +1,11 @@
-import { describe, it, expect } from 'vitest';
-import { parseAIResponse, AIStructuredResponseSchema } from '../../src/utils/aiParser';
+import { describe, expect, it } from 'vitest';
+import {
+  isActionableAIResponse,
+  parseAIResponse,
+} from '../../src/utils/aiParser';
 
 describe('aiParser', () => {
-  it('parses valid JSON response', () => {
+  it('parses valid actionable JSON response', () => {
     const json = `\`\`\`json
 {
   "action": "create_task",
@@ -14,11 +17,34 @@ describe('aiParser', () => {
   }
 }
 \`\`\``;
-    
+
     const result = parseAIResponse(json);
+
     expect(result).not.toBeNull();
     expect(result?.action).toBe('create_task');
     expect(result?.task?.name).toBe('Test Task');
+    expect(isActionableAIResponse(result)).toBe(true);
+  });
+
+  it('parses info responses as non-actionable', () => {
+    const json = `\`\`\`json
+{
+  "action": "",
+  "task": null,
+  "error": {
+    "code": "INFO",
+    "message": "Here is some help"
+  }
+}
+\`\`\``;
+
+    const result = parseAIResponse(json);
+
+    expect(result).not.toBeNull();
+    expect(result?.action).toBe('');
+    expect(result?.task).toBeNull();
+    expect(result?.error?.code).toBe('INFO');
+    expect(isActionableAIResponse(result)).toBe(false);
   });
 
   it('returns null for invalid JSON', () => {

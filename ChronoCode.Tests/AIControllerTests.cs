@@ -14,12 +14,14 @@ namespace ChronoCode.Tests;
 public class AIControllerTests
 {
     [Fact]
-    public async Task HandleChatMessage_DeletesTemporaryDirectory_AfterSuccessfulRequest()
+    public async Task HandleChatMessage_ReturnsStructuredInfoResponse_AndDeletesTemporaryDirectory()
     {
         var opencodeClient = new RecordingOpencodeClient
         {
             SendPromptResult = JsonSerializer.Serialize(new AIStructuredResponse
             {
+                Action = string.Empty,
+                Task = null,
                 Error = new AIError
                 {
                     Code = "INFO",
@@ -34,7 +36,14 @@ public class AIControllerTests
             Message = "help me summarize tasks"
         });
 
-        Assert.IsType<OkObjectResult>(result);
+        var objectResult = Assert.IsType<OkObjectResult>(result);
+        var response = Assert.IsType<AIStructuredResponse>(objectResult.Value);
+        Assert.Equal(string.Empty, response.Action);
+        Assert.Null(response.TaskId);
+        Assert.Null(response.Task);
+        Assert.NotNull(response.Error);
+        Assert.Equal("INFO", response.Error.Code);
+        Assert.Equal("ok", response.Error.Message);
         Assert.NotNull(opencodeClient.WorkingDirectory);
         Assert.False(Directory.Exists(opencodeClient.WorkingDirectory));
     }

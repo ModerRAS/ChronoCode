@@ -118,7 +118,7 @@ public class OpencodeServerManager : IOpencodeServerManager, IDisposable
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to start opencode server");
-            try { StopServerAsync().GetAwaiter().GetResult(); } catch { /* ignore cleanup errors */ }
+            try { await StopServerAsync(); } catch { /* ignore cleanup errors */ }
             throw;
         }
     }
@@ -159,7 +159,7 @@ public class OpencodeServerManager : IOpencodeServerManager, IDisposable
 
     public async Task StopServerAsync()
     {
-        if (!_isRunning || _serverProcess == null)
+        if (_serverProcess == null)
         {
             return;
         }
@@ -188,6 +188,25 @@ public class OpencodeServerManager : IOpencodeServerManager, IDisposable
 
     public void Dispose()
     {
-        StopServerAsync().Wait();
+        try
+        {
+            _cts?.Cancel();
+            if (_serverProcess is { HasExited: false })
+            {
+                _serverProcess.Kill(true);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error disposing opencode server");
+        }
+        finally
+        {
+            _isRunning = false;
+            _serverProcess?.Dispose();
+            _serverProcess = null;
+            _cts?.Dispose();
+            _cts = null;
+        }
     }
 }

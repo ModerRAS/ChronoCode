@@ -10,7 +10,7 @@ public interface ISchedulerService
     void ScheduleTask(ScheduledTask task);
     void UnscheduleTask(Guid taskId);
     void TriggerTask(Guid taskId);
-    List<ScheduledTask> GetScheduledTasks();
+    Task<List<ScheduledTask>> GetScheduledTasksAsync();
     List<DateTime> GetNextRunTimes(Guid taskId, int count = 5);
 }
 
@@ -65,19 +65,19 @@ public class HangfireSchedulerService : ISchedulerService
         _logger.LogInformation("Triggered task {TaskId} with job id: {JobId}", taskId, jobId);
     }
 
-    public List<ScheduledTask> GetScheduledTasks()
+    public async Task<List<ScheduledTask>> GetScheduledTasksAsync()
     {
         using var connection = JobStorage.Current.GetConnection();
         var jobs = connection.GetRecurringJobs();
-        
+
         var taskIds = jobs
             .Where(j => j.Id.StartsWith("task_"))
             .Select(j => j.Id.Replace("task_", ""))
             .Select(Guid.Parse)
             .ToList();
 
-        return taskIds
-            .Select(id => _taskRepository.GetByIdAsync(id).GetAwaiter().GetResult())
+        var tasks = await Task.WhenAll(taskIds.Select(id => _taskRepository.GetByIdAsync(id)));
+        return tasks
             .Where(t => t != null)
             .Cast<ScheduledTask>()
             .ToList();

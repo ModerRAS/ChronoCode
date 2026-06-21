@@ -131,7 +131,7 @@ public class GitService : IGitService
         return await Task.Run(() =>
         {
             var prUrl = $"https://github.com/{ExtractOwnerAndRepo(repoPath)}/pull/new/{branchName}";
-            _logger.LogInformation("Pull request would be created at: {Url}", prUrl);
+            _logger.LogInformation("GitHub API not integrated - returning mock PR URL: {Url}", prUrl);
             return prUrl;
         });
     }

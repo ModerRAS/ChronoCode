@@ -2,6 +2,8 @@
 
 AI驱动的定时任务调度框架 - 通过自然语言对话或传统表单方式创建和管理定时任务
 
+当前支持两种执行后端：`opencode` 和 `pi`。其中 `pi` 通过 RPC 模式运行，支持保留会话、获取 `sessionId/sessionFile`，以及在任务执行中追加 `steer` / `follow_up` 消息。
+
 ## 架构
 
 ```
@@ -23,8 +25,8 @@ AI驱动的定时任务调度框架 - 通过自然语言对话或传统表单方
          ┌───────────────────┼───────────────────┐
          ↓                   ↓                   ↓
 ┌──────────────────┐ ┌─────────────────┐ ┌──────────────────┐
-│  opencode serve  │ │ ChronoCode 后端 │ │  opencode serve   │
-│  (AI对话)        │◄┤  (REST API)    │◄┤  (任务执行)       │
+│ opencode / pi RPC│ │ ChronoCode 后端 │ │ opencode / pi RPC │
+│  (AI对话/执行)   │◄┤  (REST API)    │◄┤   (任务执行)      │
 └──────────────────┘ └────────┬────────┘ └──────────────────┘
                                │
                                ↓
@@ -62,7 +64,7 @@ AI驱动的定时任务调度框架 - 通过自然语言对话或传统表单方
 - .NET 10.0 SDK
 - Node.js 18+
 - PostgreSQL 14+
-- opencode serve (外部依赖)
+- 可选执行后端之一：`opencode serve` 或 `pi`
 
 ### 1. 克隆项目
 ```bash
@@ -70,20 +72,36 @@ git clone https://github.com/ModerRAS/ChronoCode.git
 cd ChronoCode
 ```
 
-### 2. 配置数据库
-在 `ChronoCode/appsettings.json` 中配置连接字符串：
+### 2. 配置数据库和执行后端
+在 `ChronoCode/appsettings.json` 中配置连接字符串和执行后端：
 ```json
 {
   "ConnectionStrings": {
     "DefaultConnection": "Host=localhost;Database=chronocode;Username=postgres;Password=postgres"
+  },
+  "AgentRuntime": {
+    "Backend": "pi"
+  },
+  "Pi": {
+    "Command": "pi",
+    "ApproveProjectTrust": true,
+    "SessionNamePrefix": "chronocode",
+    "Thinking": "medium"
   }
 }
 ```
+
+如果继续使用 `opencode`，将 `AgentRuntime:Backend` 保持为 `opencode`，并保留 `Opencode` 配置段。
 
 ### 3. 启动应用
 ```bash
 cd ChronoCode
 dotnet run
+```
+
+应用启动时会自动执行 EF Core migration；首次拉取代码后如果需要手动管理 migration，可使用仓库根目录里的本地工具：
+```bash
+dotnet tool run dotnet-ef migrations list --project ChronoCode
 ```
 
 首次构建或后续 `dotnet build` / `dotnet test` 会自动执行前端打包，并将静态资源输出到 `ChronoCode/wwwroot`。
@@ -126,9 +144,12 @@ npm run dev
 | POST | /api/tasks/{id}/run | 手动触发任务 |
 | GET | /api/tasks/{id}/executions | 获取执行历史 |
 | POST | /api/tasks/ai | AI创建任务接口 |
-| GET | /api/tasks/server/status | AI服务器状态 |
-| POST | /api/tasks/server/start | 启动AI服务器 |
-| POST | /api/tasks/server/stop | 停止AI服务器 |
+| GET | /api/tasks/executions/{id}/session | 获取执行绑定的 agent 会话 |
+| POST | /api/tasks/executions/{id}/resume | 按 executionId 恢复/重连持久化的 pi 会话 |
+| POST | /api/tasks/executions/{id}/message | 向运行中的 agent 追加 prompt / steer / follow_up |
+| GET | /api/tasks/server/status | 当前执行后端状态 |
+| POST | /api/tasks/server/start | 启动当前执行后端 |
+| POST | /api/tasks/server/stop | 停止当前执行后端 |
 
 详见 [API文档](docs/api.md)
 

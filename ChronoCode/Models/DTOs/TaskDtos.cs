@@ -91,6 +91,38 @@ public class ExecutionDto
     public string? PrUrl { get; set; }
     public int FilesChanged { get; set; }
     public string? ErrorMessage { get; set; }
+    public string? AgentBackend { get; set; }
+    public string? AgentSessionId { get; set; }
+    public string? AgentSessionFile { get; set; }
+    public string? AgentWorkingDirectory { get; set; }
+}
+
+public class ExecutionSessionDto
+{
+    public Guid ExecutionId { get; set; }
+    public string? Backend { get; set; }
+    public string? SessionId { get; set; }
+    public string? SessionFile { get; set; }
+    public string? WorkingDirectory { get; set; }
+    public bool IsLive { get; set; }
+    public bool SupportsPersistentSessions { get; set; }
+    public bool SupportsSupplementalMessages { get; set; }
+    public bool CanResume { get; set; }
+}
+
+public class ExecutionMessageDto
+{
+    [Required]
+    public string Message { get; set; } = string.Empty;
+
+    [MaxLength(20)]
+    public string Mode { get; set; } = "steer";
+}
+
+public class ResumeExecutionSessionDto
+{
+    [MaxLength(1024)]
+    public string? SessionRef { get; set; }
 }
 
 public class LogDto

@@ -1,5 +1,11 @@
 <template>
-  <a-layout class="app-layout">
+  <div v-if="setupLoading" class="setup-loading">
+    <a-spin size="large" />
+  </div>
+
+  <SetupView v-else-if="!initialized" @initialized="handleInitialized" />
+
+  <a-layout v-else class="app-layout">
     <a-layout-sider v-model:collapsed="collapsed" :trigger="null" collapsible theme="dark" class="app-sider">
       <div class="logo">
         <RobotOutlined v-if="collapsed" />
@@ -35,7 +41,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { onMounted, ref, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import {
   MenuUnfoldOutlined,
@@ -44,11 +50,15 @@ import {
   CommentOutlined,
   RobotOutlined
 } from '@ant-design/icons-vue'
+import SetupView from './views/SetupView.vue'
+import { setupApi } from './api/setup'
 
 const router = useRouter()
 const route = useRoute()
 const collapsed = ref(false)
 const selectedKeys = ref<string[]>([route.path])
+const initialized = ref(true)
+const setupLoading = ref(true)
 
 watch(() => route.path, (newPath) => {
   selectedKeys.value = [newPath]
@@ -57,9 +67,38 @@ watch(() => route.path, (newPath) => {
 const handleMenuClick = (e: { key: string }) => {
   router.push(e.key)
 }
+
+const loadSetupStatus = async () => {
+  try {
+    const status = await setupApi.getStatus()
+    initialized.value = status.initialized
+  } catch {
+    initialized.value = true
+  } finally {
+    setupLoading.value = false
+  }
+}
+
+const handleInitialized = async () => {
+  setupLoading.value = true
+  await loadSetupStatus()
+  if (initialized.value) {
+    router.replace('/')
+  }
+}
+
+onMounted(loadSetupStatus)
 </script>
 
 <style scoped>
+.setup-loading {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #f6f8fb;
+}
+
 .app-layout {
   min-height: 100vh;
 }

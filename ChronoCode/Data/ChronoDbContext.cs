@@ -11,7 +11,6 @@ public class ChronoDbContext : DbContext
 
     public DbSet<ScheduledTask> ScheduledTasks => Set<ScheduledTask>();
     public DbSet<TaskExecution> TaskExecutions => Set<TaskExecution>();
-    public DbSet<TaskLogEntry> TaskLogEntries => Set<TaskLogEntry>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -52,6 +51,10 @@ public class ChronoDbContext : DbContext
             entity.Property(e => e.BranchName).HasMaxLength(200);
             entity.Property(e => e.CommitSha).HasMaxLength(40);
             entity.Property(e => e.PrUrl).HasMaxLength(500);
+            entity.Property(e => e.AgentBackend).HasMaxLength(32);
+            entity.Property(e => e.AgentSessionId).HasMaxLength(128);
+            entity.Property(e => e.AgentSessionFile).HasMaxLength(1024);
+            entity.Property(e => e.AgentWorkingDirectory).HasMaxLength(1024);
 
             entity.HasIndex(e => e.TaskId);
             entity.HasIndex(e => e.Status);
@@ -69,13 +72,5 @@ public class ChronoDbContext : DbContext
                   .HasColumnType("jsonb");
         });
 
-        modelBuilder.Entity<TaskLogEntry>(entity =>
-        {
-            entity.HasKey(e => e.Id);
-            entity.Property(e => e.Id).ValueGeneratedNever();
-            entity.Property(e => e.Timestamp).HasDefaultValueSql("CURRENT_TIMESTAMP");
-            entity.Property(e => e.Level).HasMaxLength(20).HasDefaultValue("Info");
-            entity.Property(e => e.Message).IsRequired();
-        });
     }
 }

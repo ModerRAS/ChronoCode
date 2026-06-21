@@ -12,6 +12,10 @@ public class TaskExecution
     public string? PrUrl { get; set; }
     public int FilesChanged { get; set; }
     public string? ErrorMessage { get; set; }
+    public string? AgentBackend { get; set; }
+    public string? AgentSessionId { get; set; }
+    public string? AgentSessionFile { get; set; }
+    public string? AgentWorkingDirectory { get; set; }
     public List<string> Logs { get; set; } = new();
 }
 

@@ -9,27 +9,24 @@ public interface ITaskRunner
 
 public class TaskRunner : ITaskRunner
 {
-    private readonly IOpencodeClient _opencodeClient;
+    private readonly IAgentRuntime _agentRuntime;
     private readonly IGitService _gitService;
     private readonly IExecutionRepository _executionRepository;
-    private readonly IOpencodeServerManager _serverManager;
     private readonly IConfiguration _configuration;
     private readonly ILogger<TaskRunner> _logger;
 
     private string WorkspaceBasePath => _configuration["TaskRunner:WorkspaceBasePath"] ?? "/workspaces";
 
     public TaskRunner(
-        IOpencodeClient opencodeClient,
+        IAgentRuntime agentRuntime,
         IGitService gitService,
         IExecutionRepository executionRepository,
-        IOpencodeServerManager serverManager,
         IConfiguration configuration,
         ILogger<TaskRunner> logger)
     {
-        _opencodeClient = opencodeClient;
+        _agentRuntime = agentRuntime;
         _gitService = gitService;
         _executionRepository = executionRepository;
-        _serverManager = serverManager;
         _configuration = configuration;
         _logger = logger;
     }
@@ -44,16 +41,31 @@ public class TaskRunner : ITaskRunner
 
         try
         {
-            await EnsureServerRunningAsync(cancellationToken);
+            await EnsureRuntimeReadyAsync(execution.Id, cancellationToken);
 
             var branchName = task.BranchStrategy == BranchStrategy.New
                 ? $"chronocode/{DateTime.UtcNow:yyyyMMddHHmmss}"
                 : $"chronocode/main";
 
-            await CloneAndSetupRepoAsync(task, workspacePath, branchName, cancellationToken);
+            await CloneAndSetupRepoAsync(execution.Id, task, workspacePath, branchName, cancellationToken);
 
-            await LogAsync(execution.Id, "Info", "Starting PLAN phase");
-            var planResult = await ExecutePlanPhaseAsync(task, workspacePath, cancellationToken);
+            var session = await _agentRuntime.EnsureExecutionSessionAsync(
+                execution.Id,
+                workspacePath,
+                chunk => LogAsync(execution.Id, "Debug", chunk),
+                cancellationToken: cancellationToken);
+
+            await _executionRepository.UpdateSessionAsync(execution.Id, session);
+
+            await LogAsync(
+                execution.Id,
+                "Info",
+                $"Using {session.Backend} session",
+                session.SessionFile == null
+                    ? session.SessionId
+                    : $"sessionId={session.SessionId}; sessionFile={session.SessionFile}");
+
+            await ExecuteTaskPromptAsync(execution.Id, task, workspacePath, "PLAN", cancellationToken);
 
             if (task.RequirePlanReview)
             {
@@ -61,8 +73,7 @@ public class TaskRunner : ITaskRunner
                 await Task.Delay(2000, cancellationToken);
             }
 
-            await LogAsync(execution.Id, "Info", "Starting EXECUTE phase");
-            await ExecutePlanPhaseAsync(task, workspacePath, cancellationToken);
+            await ExecuteTaskPromptAsync(execution.Id, task, workspacePath, "EXECUTE", cancellationToken);
 
             var changedFiles = await _gitService.GetChangedFilesAsync(workspacePath);
             await LogAsync(execution.Id, "Info", $"Changed {changedFiles.Count} files");
@@ -107,69 +118,88 @@ public class TaskRunner : ITaskRunner
         }
     }
 
-    private async Task EnsureServerRunningAsync(CancellationToken cancellationToken)
+    private async Task EnsureRuntimeReadyAsync(Guid executionId, CancellationToken cancellationToken)
     {
-        if (!_serverManager.IsServerRunning)
+        var status = _agentRuntime.GetStatus();
+        if (!status.IsReady)
         {
-            await LogAsync(Guid.Empty, "Info", "Starting opencode server...");
-            await _serverManager.StartServerAsync(cancellationToken);
-            await _serverManager.WaitForServerReadyAsync(TimeSpan.FromSeconds(30));
+            await LogAsync(executionId, "Info", $"Starting {status.Backend} runtime...");
         }
+
+        await _agentRuntime.EnsureReadyAsync(cancellationToken);
+
+        status = _agentRuntime.GetStatus();
+        await LogAsync(
+            executionId,
+            "Info",
+            $"{status.Backend} runtime ready",
+            status.Endpoint == null ? null : $"Endpoint: {status.Endpoint}");
     }
 
-    private async Task CloneAndSetupRepoAsync(ScheduledTask task, string workspacePath, string branchName, CancellationToken cancellationToken)
+    private async Task CloneAndSetupRepoAsync(Guid executionId, ScheduledTask task, string workspacePath, string branchName, CancellationToken cancellationToken)
     {
-        await LogAsync(Guid.Empty, "Info", $"Cloning {task.RepositoryUrl}");
+        await LogAsync(executionId, "Info", $"Cloning {task.RepositoryUrl}");
         await _gitService.CloneRepositoryAsync(task.RepositoryUrl, workspacePath);
 
-        await LogAsync(Guid.Empty, "Info", $"Creating branch: {branchName}");
+        await LogAsync(executionId, "Info", $"Creating branch: {branchName}");
         await _gitService.CreateBranchAsync(workspacePath, branchName, task.BaseBranch);
         await _gitService.CheckoutBranchAsync(workspacePath, branchName);
     }
 
-    private async Task<string> ExecutePlanPhaseAsync(ScheduledTask task, string workspacePath, CancellationToken cancellationToken)
+    private async Task ExecuteTaskPromptAsync(
+        Guid executionId,
+        ScheduledTask task,
+        string workspacePath,
+        string phase,
+        CancellationToken cancellationToken)
     {
-        var prompt = BuildPrompt(task);
+        await LogAsync(executionId, "Info", $"Starting {phase} phase");
 
-        await _opencodeClient.SendPromptWithStreamingAsync(
-            await _opencodeClient.CreateSessionAsync(workspacePath, cancellationToken),
-            prompt,
+        var prompt = BuildPrompt(task, phase);
+
+        await _agentRuntime.SendMessageAsync(
+            executionId,
             workspacePath,
-            async (chunk) =>
-            {
-                await LogAsync(Guid.Empty, "Debug", $"AI: {chunk}");
-            },
+            prompt,
+            AgentMessageMode.Prompt,
+            chunk => LogAsync(executionId, "Debug", chunk),
             cancellationToken);
-
-        return "Plan executed";
     }
 
-    private string BuildPrompt(ScheduledTask task)
+    private string BuildPrompt(ScheduledTask task, string phase)
     {
-        return $@"
-You are an AI coding assistant. Execute the following task:
+        var phaseInstruction = phase == "PLAN"
+            ? "First inspect the repository and produce a concrete plan, then begin implementing if the plan is straightforward."
+            : "Continue from your analysis and implement the requested changes completely. If the task is already complete, make no unnecessary edits.";
 
+        return $@"
+You are an AI coding assistant running inside a scheduled task executor.
+
+TASK:
 {task.Prompt}
+
+CURRENT PHASE:
+{phase}
 
 CONSTRAINTS:
 - Maximum {task.MaxFileChanges} files can be modified
 - Maximum runtime: {task.MaxRuntimeSeconds} seconds
-- Always create proper commit messages
+- Always create proper commit messages when changes are made
+- Prefer the smallest correct change
+- Do not force push
+- Do not delete branches
+- Do not delete more than 10 files at once
+- Do not modify CI/CD configurations
+- Do not change permissions
 
-ALLOWED ACTIONS:
-- Read files
-- Modify code
-- Add new files
-- Create commits
+WORKFLOW:
+- Explore the project structure first
+- Respect repository instructions such as AGENTS.md when present
+- Make changes directly in the checked out workspace
+- Leave the repository clean enough for commit and PR creation
 
-FORBIDDEN ACTIONS:
-- Force push
-- Delete branches
-- Delete more than 10 files at once
-- Modify CI/CD configurations
-- Change permissions
-
-Please analyze the codebase and implement the requested changes. Start by exploring the project structure, then make your changes.
+PHASE INSTRUCTION:
+{phaseInstruction}
 ";
     }
 
@@ -179,6 +209,7 @@ Please analyze the codebase and implement the requested changes. Start by explor
         {
             await _executionRepository.AddLogAsync(executionId, level, message, details);
         }
+
         _logger.Log(level switch
         {
             "Error" => LogLevel.Error,

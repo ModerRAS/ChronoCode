@@ -63,3 +63,7 @@ dotnet-install.sh
 .pi/
 wt/
 test-results/
+
+# Local app setup
+ChronoCode/appsettings.Local.json
+ChronoCode/data/

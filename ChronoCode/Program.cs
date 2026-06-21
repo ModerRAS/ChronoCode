@@ -7,10 +7,12 @@ using FluentValidation.AspNetCore;
 using Hangfire;
 using Hangfire.MemoryStorage;
 using Hangfire.Dashboard;
+using Microsoft.AspNetCore.Http.Extensions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.FileProviders;
 
 var builder = WebApplication.CreateBuilder(args);
+builder.Configuration.AddJsonFile(DatabaseConfiguration.LocalConfigFileName, optional: true, reloadOnChange: true);
 
 builder.Services.AddControllers()
     .AddFluentValidation(v => v.RegisterValidatorsFromAssemblyContaining<CreateTaskDtoValidator>())
@@ -38,10 +40,11 @@ builder.Services.AddHangfire(config => config
 builder.Services.AddHangfireServer(options => options.ServerName = "ChronoCode");
 
 builder.Services.AddDbContext<ChronoDbContext>(options =>
-    options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
+    DatabaseConfiguration.Configure(options, builder.Configuration, builder.Environment));
 
 builder.Services.AddScoped<ITaskRepository, EfTaskRepository>();
 builder.Services.AddScoped<IExecutionRepository, EfExecutionRepository>();
+builder.Services.AddSingleton<ISetupService, SetupService>();
 builder.Services.AddSingleton<IOpencodeServerManager, OpencodeServerManager>();
 builder.Services.AddSingleton<IOpencodeClient, OpencodeClient>();
 builder.Services.AddSingleton<OpencodeRuntime>();
@@ -69,12 +72,47 @@ builder.Services.AddHttpClient("GitHub", client =>
 });
 var app = builder.Build();
 
-await EnsureDatabaseAsync(app);
+var setupInitialized = DatabaseConfiguration.IsConfigured(app.Configuration, app.Environment);
+if (setupInitialized)
+{
+    await EnsureDatabaseAsync(app);
+}
 
 app.UseRouting();
 app.UseCors();
 
 app.UseExceptionHandling();
+
+app.Use(async (context, next) =>
+{
+    if (DatabaseConfiguration.IsConfigured(app.Configuration, app.Environment))
+    {
+        await next();
+        return;
+    }
+
+    var path = context.Request.Path;
+    var isSetupApi = path.StartsWithSegments("/api/setup");
+    var isHealth = path.StartsWithSegments("/health");
+    var isSetupPage = !path.StartsWithSegments("/api") && !Path.HasExtension(path);
+    var isStaticAsset = !path.StartsWithSegments("/api") && Path.HasExtension(path);
+
+    if (isSetupApi || isHealth || isSetupPage || isStaticAsset)
+    {
+        await next();
+        return;
+    }
+
+    context.Response.StatusCode = StatusCodes.Status503ServiceUnavailable;
+    await context.Response.WriteAsJsonAsync(new
+    {
+        error = new
+        {
+            code = "SETUP_REQUIRED",
+            message = "ChronoCode is not initialized yet. Open the setup page to choose and configure a database."
+        }
+    });
+});
 
 app.UseDefaultFiles();
 app.UseStaticFiles(new StaticFileOptions
@@ -90,7 +128,12 @@ app.UseHangfireDashboard("/hangfire", new DashboardOptions
 
 app.MapControllers();
 
-app.MapGet("/health", () => Results.Ok(new { Status = "Healthy", Timestamp = DateTime.UtcNow }));
+app.MapGet("/health", () => Results.Ok(new
+{
+    Status = "Healthy",
+    Timestamp = DateTime.UtcNow,
+    Initialized = DatabaseConfiguration.IsConfigured(app.Configuration, app.Environment)
+}));
 
 app.MapFallback(async context =>
 {
@@ -116,6 +159,14 @@ static async Task EnsureDatabaseAsync(WebApplication app)
 
     await using var scope = app.Services.CreateAsyncScope();
     var db = scope.ServiceProvider.GetRequiredService<ChronoDbContext>();
+    var provider = DatabaseConfiguration.NormalizeProvider(app.Configuration["Database:Provider"]);
+
+    if (provider == DatabaseConfiguration.SqliteProvider)
+    {
+        await db.Database.EnsureCreatedAsync();
+        return;
+    }
+
     await db.Database.MigrateAsync();
 }
 

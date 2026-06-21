@@ -7,6 +7,7 @@ using FluentValidation;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -28,6 +29,14 @@ public class TasksControllerTests : IClassFixture<WebApplicationFactory<Program>
         _factory = factory.WithWebHostBuilder(builder =>
         {
             builder.UseEnvironment("Testing");
+            builder.ConfigureAppConfiguration((_, config) =>
+            {
+                config.AddInMemoryCollection(new Dictionary<string, string?>
+                {
+                    ["Database:Provider"] = DatabaseConfiguration.SqliteProvider,
+                    ["ConnectionStrings:SqliteConnection"] = "Data Source=:memory:",
+                });
+            });
             builder.ConfigureServices(services =>
             {
                 services.RemoveAll<ChronoDbContext>();

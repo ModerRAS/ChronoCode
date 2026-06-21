@@ -155,7 +155,7 @@ public class GitService : IGitService
 
         var (owner, repo) = ExtractOwnerAndRepoParts(repoPath);
         var apiUrl = $"https://api.github.com/repos/{owner}/{repo}/pulls";
-        
+
         var payload = new
         {
             title,

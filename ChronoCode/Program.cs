@@ -3,16 +3,17 @@ using ChronoCode.Middleware;
 using ChronoCode.Services;
 using ChronoCode.Validators;
 using FluentValidation;
+using FluentValidation.AspNetCore;
 using Hangfire;
 using Hangfire.MemoryStorage;
 using Hangfire.Dashboard;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.FileProviders;
-using System.Text.Json;
 
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddControllers()
+    .AddFluentValidation(v => v.RegisterValidatorsFromAssemblyContaining<CreateTaskDtoValidator>())
     .AddJsonOptions(options =>
     {
         options.JsonSerializerOptions.PropertyNameCaseInsensitive = true;
@@ -48,8 +49,6 @@ builder.Services.AddScoped<ITaskRunner, TaskRunner>();
 builder.Services.AddScoped<ISchedulerService, HangfireSchedulerService>();
 builder.Services.AddScoped<ScheduledTaskJob>();
 
-builder.Services.AddValidatorsFromAssemblyContaining<CreateTaskDtoValidator>();
-
 builder.Services.AddHttpClient("Opencode", client =>
 {
     client.Timeout = TimeSpan.FromMinutes(5);
@@ -65,7 +64,6 @@ builder.Services.AddHttpClient("GitHub", client =>
     client.BaseAddress = new Uri("https://api.github.com");
     client.DefaultRequestHeaders.Add("User-Agent", "ChronoCode");
 });
-
 var app = builder.Build();
 
 // Ensure database is created

@@ -66,21 +66,18 @@ public class HangfireSchedulerService : ISchedulerService
     {
         using var connection = JobStorage.Current.GetConnection();
         var jobs = connection.GetRecurringJobs();
-        
+
         var taskIds = jobs
             .Where(j => j.Id.StartsWith("task_"))
             .Select(j => j.Id.Replace("task_", ""))
             .Select(Guid.Parse)
             .ToList();
 
-        var result = new List<ScheduledTask>();
-        foreach (var id in taskIds)
-        {
-            var task = await _taskRepository.GetByIdAsync(id);
-            if (task != null)
-                result.Add(task);
-        }
-        return result;
+        var tasks = await Task.WhenAll(taskIds.Select(id => _taskRepository.GetByIdAsync(id)));
+        return tasks
+            .Where(t => t != null)
+            .Cast<ScheduledTask>()
+            .ToList();
     }
 
     public List<DateTime> GetNextRunTimes(Guid taskId, int count = 5)

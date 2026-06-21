@@ -137,6 +137,23 @@ public class PiRuntime : IAgentRuntime
         return await state.SessionReady.Task.WaitAsync(cancellationToken);
     }
 
+    public async Task<AgentExecutionSession> ResumeExecutionSessionAsync(
+        Guid executionId,
+        string workingDirectory,
+        string sessionRef,
+        Func<string, Task> onChunk,
+        CancellationToken cancellationToken = default)
+    {
+        if (_executions.TryGetValue(executionId, out var existing))
+        {
+            return await existing.SessionReady.Task.WaitAsync(cancellationToken);
+        }
+
+        var state = await StartProcessAsync(executionId, workingDirectory, onChunk, sessionRef, cancellationToken);
+        _executions[executionId] = state;
+        return await state.SessionReady.Task.WaitAsync(cancellationToken);
+    }
+
     public async Task StopExecutionAsync(Guid executionId, CancellationToken cancellationToken = default)
     {
         if (!_executions.TryRemove(executionId, out var state))

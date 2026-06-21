@@ -88,6 +88,16 @@ public class OpencodeRuntime : IAgentRuntime
         return Task.FromResult(session);
     }
 
+    public Task<AgentExecutionSession> ResumeExecutionSessionAsync(
+        Guid executionId,
+        string workingDirectory,
+        string sessionRef,
+        Func<string, Task> onChunk,
+        CancellationToken cancellationToken = default)
+    {
+        throw new NotSupportedException("Opencode runtime does not support persistent session resume.");
+    }
+
     public async Task StopExecutionAsync(Guid executionId, CancellationToken cancellationToken = default)
     {
         if (_sessions.TryGetValue(executionId, out var session) && !string.IsNullOrWhiteSpace(session.SessionId))

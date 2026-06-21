@@ -59,6 +59,16 @@ public class ConfiguredAgentRuntime : IAgentRuntime
         return GetRuntime().GetExecutionSessionAsync(executionId, cancellationToken);
     }
 
+    public Task<AgentExecutionSession> ResumeExecutionSessionAsync(
+        Guid executionId,
+        string workingDirectory,
+        string sessionRef,
+        Func<string, Task> onChunk,
+        CancellationToken cancellationToken = default)
+    {
+        return GetRuntime().ResumeExecutionSessionAsync(executionId, workingDirectory, sessionRef, onChunk, cancellationToken);
+    }
+
     public Task StopExecutionAsync(Guid executionId, CancellationToken cancellationToken = default)
     {
         return GetRuntime().StopExecutionAsync(executionId, cancellationToken);

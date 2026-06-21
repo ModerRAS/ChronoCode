@@ -91,16 +91,17 @@ cd ChronoCode
 }
 ```
 
-<<<<<<< HEAD
-### 3. 启动应用
-=======
 如果继续使用 `opencode`，将 `AgentRuntime:Backend` 保持为 `opencode`，并保留 `Opencode` 配置段。
 
-### 3. 启动后端
->>>>>>> 35f25ce (Add pi RPC runtime backend)
+### 3. 启动应用
 ```bash
 cd ChronoCode
 dotnet run
+```
+
+应用启动时会自动执行 EF Core migration；首次拉取代码后如果需要手动管理 migration，可使用仓库根目录里的本地工具：
+```bash
+dotnet tool run dotnet-ef migrations list --project ChronoCode
 ```
 
 首次构建或后续 `dotnet build` / `dotnet test` 会自动执行前端打包，并将静态资源输出到 `ChronoCode/wwwroot`。
@@ -144,6 +145,7 @@ npm run dev
 | GET | /api/tasks/{id}/executions | 获取执行历史 |
 | POST | /api/tasks/ai | AI创建任务接口 |
 | GET | /api/tasks/executions/{id}/session | 获取执行绑定的 agent 会话 |
+| POST | /api/tasks/executions/{id}/resume | 按 executionId 恢复/重连持久化的 pi 会话 |
 | POST | /api/tasks/executions/{id}/message | 向运行中的 agent 追加 prompt / steer / follow_up |
 | GET | /api/tasks/server/status | 当前执行后端状态 |
 | POST | /api/tasks/server/start | 启动当前执行后端 |

@@ -51,5 +51,12 @@ public interface IAgentRuntime
         Guid executionId,
         CancellationToken cancellationToken = default);
 
+    Task<AgentExecutionSession> ResumeExecutionSessionAsync(
+        Guid executionId,
+        string workingDirectory,
+        string sessionRef,
+        Func<string, Task> onChunk,
+        CancellationToken cancellationToken = default);
+
     Task StopExecutionAsync(Guid executionId, CancellationToken cancellationToken = default);
 }

@@ -91,6 +91,10 @@ public class ExecutionDto
     public string? PrUrl { get; set; }
     public int FilesChanged { get; set; }
     public string? ErrorMessage { get; set; }
+    public string? AgentBackend { get; set; }
+    public string? AgentSessionId { get; set; }
+    public string? AgentSessionFile { get; set; }
+    public string? AgentWorkingDirectory { get; set; }
 }
 
 public class ExecutionSessionDto
@@ -113,6 +117,12 @@ public class ExecutionMessageDto
 
     [MaxLength(20)]
     public string Mode { get; set; } = "steer";
+}
+
+public class ResumeExecutionSessionDto
+{
+    [MaxLength(1024)]
+    public string? SessionRef { get; set; }
 }
 
 public class LogDto

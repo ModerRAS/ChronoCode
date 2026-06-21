@@ -55,6 +55,8 @@ public class TaskRunner : ITaskRunner
                 chunk => LogAsync(execution.Id, "Debug", chunk),
                 cancellationToken: cancellationToken);
 
+            await _executionRepository.UpdateSessionAsync(execution.Id, session);
+
             await LogAsync(
                 execution.Id,
                 "Info",

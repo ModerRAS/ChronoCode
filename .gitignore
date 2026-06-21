@@ -58,3 +58,8 @@ dotnet-install.sh
 
 # Playwright
 .playwright-mcp/
+
+# Agent runtimes / local tooling
+.pi/
+wt/
+test-results/

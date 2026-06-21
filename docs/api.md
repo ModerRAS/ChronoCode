@@ -188,7 +188,11 @@ ChronoCode 提供 RESTful API 用于管理定时任务。API 基于 JSON 格式�
     "commitSha": "abc1234",
     "prUrl": "https://github.com/owner/repo/pull/123",
     "filesChanged": 5,
-    "errorMessage": null
+    "errorMessage": null,
+    "agentBackend": "pi",
+    "agentSessionId": "abc123",
+    "agentSessionFile": "C:/Users/.../session.jsonl",
+    "agentWorkingDirectory": "C:/workspaces/..."
   }
 ]
 ```
@@ -337,6 +341,41 @@ ChronoCode 提供 RESTful API 用于管理定时任务。API 基于 JSON 格式�
 ```
 
 当执行后端不支持持久会话或当前 execution 已无 live session 时，`isLive` 为 `false`，`sessionId` / `sessionFile` 可能为空。
+
+---
+
+### 恢复或重连执行会话
+
+**POST** `/api/tasks/executions/{executionId}/resume`
+
+`pi` 后端会优先使用 execution 上持久化的 `sessionFile`，不存在时回退到 `sessionId`。如果请求体提供了 `sessionRef`，则以该值为准。
+
+**Request Body** (optional):
+```json
+{
+  "sessionRef": "C:/Users/.../session.jsonl"
+}
+```
+
+**Response** (200 OK):
+```json
+{
+  "executionId": "uuid",
+  "backend": "pi",
+  "sessionId": "abc123",
+  "sessionFile": "C:/Users/.../session.jsonl",
+  "workingDirectory": "C:/workspaces/...",
+  "isLive": true,
+  "supportsPersistentSessions": true,
+  "supportsSupplementalMessages": true,
+  "canResume": true
+}
+```
+
+**Response** (409 Conflict):
+- 当前后端与 execution 记录的后端不一致
+- 当前后端不支持 session resume
+- execution 没有可恢复的 `sessionFile` / `sessionId` / `workingDirectory`
 
 ---
 

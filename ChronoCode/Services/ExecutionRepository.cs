@@ -8,6 +8,7 @@ public interface IExecutionRepository
     Task<TaskExecution?> GetByIdAsync(Guid id);
     Task<List<TaskExecution>> GetByTaskIdAsync(Guid taskId, int limit = 10);
     Task UpdateAsync(TaskExecution execution);
+    Task UpdateSessionAsync(Guid executionId, AgentExecutionSession session);
     Task AddLogAsync(Guid executionId, string level, string message, string? details = null);
     Task<List<TaskLogEntry>> GetLogsAsync(Guid executionId);
 }
@@ -63,6 +64,20 @@ public class InMemoryExecutionRepository : IExecutionRepository
         {
             _executions[index] = execution;
         }
+        return Task.CompletedTask;
+    }
+
+    public Task UpdateSessionAsync(Guid executionId, AgentExecutionSession session)
+    {
+        var execution = _executions.FirstOrDefault(e => e.Id == executionId);
+        if (execution != null)
+        {
+            execution.AgentBackend = session.Backend;
+            execution.AgentSessionId = session.SessionId;
+            execution.AgentSessionFile = session.SessionFile;
+            execution.AgentWorkingDirectory = session.WorkingDirectory;
+        }
+
         return Task.CompletedTask;
     }
 

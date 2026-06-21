@@ -69,19 +69,7 @@ builder.Services.AddHttpClient("GitHub", client =>
 });
 var app = builder.Build();
 
-// Ensure database is created
-using (var scope = app.Services.CreateScope())
-{
-    var db = scope.ServiceProvider.GetRequiredService<ChronoDbContext>();
-    if (db.Database.IsRelational())
-    {
-        await db.Database.MigrateAsync();
-    }
-    else
-    {
-        await db.Database.EnsureCreatedAsync();
-    }
-}
+await EnsureDatabaseAsync(app);
 
 app.UseRouting();
 app.UseCors();
@@ -118,6 +106,18 @@ app.MapFallback(async context =>
 });
 
 app.Run();
+
+static async Task EnsureDatabaseAsync(WebApplication app)
+{
+    if (app.Environment.IsEnvironment("Testing"))
+    {
+        return;
+    }
+
+    await using var scope = app.Services.CreateAsyncScope();
+    var db = scope.ServiceProvider.GetRequiredService<ChronoDbContext>();
+    await db.Database.MigrateAsync();
+}
 
 public class HangfireAuthFilter : IDashboardAuthorizationFilter
 {

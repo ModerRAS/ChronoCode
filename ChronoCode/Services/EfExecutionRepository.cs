@@ -53,6 +53,21 @@ public class EfExecutionRepository : IExecutionRepository
         await _context.SaveChangesAsync();
     }
 
+    public async Task UpdateSessionAsync(Guid executionId, AgentExecutionSession session)
+    {
+        var execution = await _context.TaskExecutions.FindAsync(executionId);
+        if (execution == null)
+        {
+            return;
+        }
+
+        execution.AgentBackend = session.Backend;
+        execution.AgentSessionId = session.SessionId;
+        execution.AgentSessionFile = session.SessionFile;
+        execution.AgentWorkingDirectory = session.WorkingDirectory;
+        await _context.SaveChangesAsync();
+    }
+
     public async Task AddLogAsync(Guid executionId, string level, string message, string? details = null)
     {
         var execution = await _context.TaskExecutions.FindAsync(executionId);

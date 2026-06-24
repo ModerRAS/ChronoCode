@@ -18,9 +18,26 @@
     <PackageReference Include="Cronos" Version="0.8.4" />
   </ItemGroup>
 
-  <Target Name="BuildFrontend" BeforeTargets="Build" Condition="'$(BuildFrontend)' != 'false'">
+  <!--
+    One-command build: `dotnet build` automatically builds the Vue.js frontend
+    and copies output to wwwroot. Skip with: dotnet build /p:BuildFrontend=false
+  -->
+  <Target Name="BuildFrontend"
+          BeforeTargets="Build"
+          Condition="'$(BuildFrontend)' != 'false'"
+          Inputs="../frontend/src/**/*.*;../frontend/index.html;../frontend/package.json;../frontend/tsconfig.json;../frontend/tsconfig.app.json;../frontend/vite.config.ts"
+          Outputs="../ChronoCode/wwwroot/index.html">
     <Exec Command="npm install" WorkingDirectory="../frontend" Condition="!Exists('../frontend/node_modules')" />
     <Exec Command="npm run build" WorkingDirectory="../frontend" />
+  </Target>
+
+  <Target Name="CleanFrontend" AfterTargets="Clean">
+    <RemoveDir Directories="../ChronoCode/wwwroot/assets" />
+    <ItemGroup>
+      <FilesToRemove Include="../ChronoCode/wwwroot/index.html" />
+      <FilesToRemove Include="../ChronoCode/wwwroot/favicon.ico" />
+    </ItemGroup>
+    <Delete Files="@(FilesToRemove)" />
   </Target>
 
 </Project>

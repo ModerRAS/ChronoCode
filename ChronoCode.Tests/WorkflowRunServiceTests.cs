@@ -656,4 +656,133 @@ public class WorkflowRunServiceTests
         public Task<string> CreatePullRequestAsync(string repoPath, string branchName, string baseBranch, string title, string body) => throw new NotImplementedException();
         public Task<List<GitFileStatus>> GetChangedFilesAsync(string repoPath) => throw new NotImplementedException();
     }
+
+    // ---- Additional edge-case tests ----
+
+    [Fact]
+    public async Task MinimalWorkflow_StartToEnd_Completes()
+    {
+        var (svc, execRepo, taskRepo, _) = CreateService();
+        var wf = WorkflowJson([
+            new StartWorkflowNode { NodeId = "start", Name = "Start", NextNodeId = "end" },
+            new EndWorkflowNode { NodeId = "end", Name = "End" }
+        ], "start");
+        var task = await CreateTaskAsync(taskRepo, wf);
+
+        var exec = await svc.StartRunAsync(task, WorkflowTriggerSource.Manual);
+
+        Assert.Equal(Models.TaskStatus.Completed, exec.Status);
+    }
+
+    [Fact]
+    public async Task SequentialAgentNodes_AllExecuteInOrder()
+    {
+        var (svc, execRepo, taskRepo, runtime) = CreateService();
+        runtime.EnqueueSend(ValidEnvelope);
+        runtime.EnqueueSend(ValidEnvelope);
+        runtime.EnqueueSend(ValidEnvelope);
+
+        var wf = WorkflowJson([
+            new StartWorkflowNode { NodeId = "start", Name = "Start", NextNodeId = "prepare" },
+            new PrepareWorkspaceWorkflowNode { NodeId = "prepare", Name = "Prepare", NextNodeId = "a1" },
+            new AgentWorkflowNode { NodeId = "a1", Name = "Agent1", Backend = WorkflowBackend.Pi, PromptTemplate = "Do step 1", DataContract = new(), NextNodeId = "a2" },
+            new AgentWorkflowNode { NodeId = "a2", Name = "Agent2", Backend = WorkflowBackend.Pi, PromptTemplate = "Do step 2", DataContract = new(), NextNodeId = "a3" },
+            new AgentWorkflowNode { NodeId = "a3", Name = "Agent3", Backend = WorkflowBackend.Pi, PromptTemplate = "Do step 3", DataContract = new(), NextNodeId = "end" },
+            new EndWorkflowNode { NodeId = "end", Name = "End" }
+        ], "start");
+        var task = await CreateTaskAsync(taskRepo, wf);
+
+        var exec = await svc.StartRunAsync(task, WorkflowTriggerSource.Manual);
+
+        Assert.Equal(Models.TaskStatus.Completed, exec.Status);
+        Assert.Equal(3, runtime.SendCalls);
+    }
+
+    [Fact]
+    public async Task Condition_OnlyTrueBranchDefined_FalseSkipsToEnd()
+    {
+        var (svc, execRepo, taskRepo, _) = CreateService();
+        var wf = WorkflowJson([
+            new StartWorkflowNode { NodeId = "start", Name = "Start", NextNodeId = "prepare" },
+            new PrepareWorkspaceWorkflowNode { NodeId = "prepare", Name = "Prepare", NextNodeId = "cond" },
+            new ConditionWorkflowNode
+            {
+                NodeId = "cond",
+                Name = "Check",
+                Predicate = new ComparisonWorkflowPredicate
+                {
+                    Path = "$.inputs.run",
+                    Operator = WorkflowComparisonOperator.Equals,
+                    Value = JsonValue.Create("yes")
+                },
+                TrueNodeId = "work",
+                FalseNodeId = "end"
+            },
+            new AgentWorkflowNode { NodeId = "work", Name = "Work", Backend = WorkflowBackend.Pi, PromptTemplate = "do work", DataContract = new(), NextNodeId = "end" },
+            new EndWorkflowNode { NodeId = "end", Name = "End" }
+        ], "start");
+        var task = await CreateTaskAsync(taskRepo, wf, "{\"run\":\"no\"}");
+
+        var exec = await svc.StartRunAsync(task, WorkflowTriggerSource.Manual);
+
+        Assert.Equal(Models.TaskStatus.Completed, exec.Status);
+        // Should skip the "work" node
+        var nodes = await execRepo.GetNodeExecutionsAsync(exec.Id);
+        Assert.DoesNotContain(nodes, n => n.NodeId == "work");
+    }
+
+    [Fact]
+    public async Task ForEach_EmptyItems_CompletesWithNoIterations()
+    {
+        var (svc, execRepo, taskRepo, runtime) = CreateService();
+        var wf = WorkflowJson([
+            new StartWorkflowNode { NodeId = "start", Name = "Start", NextNodeId = "prepare" },
+            new PrepareWorkspaceWorkflowNode { NodeId = "prepare", Name = "Prepare", NextNodeId = "loop" },
+            new ForEachWorkflowNode
+            {
+                NodeId = "loop",
+                Name = "Loop",
+                CollectionPath = "$.inputs.items",
+                BodyStartNodeId = "body",
+                NextNodeId = "end",
+                MaxIterations = 10
+            },
+            new AgentWorkflowNode { NodeId = "body", Name = "Body", Backend = WorkflowBackend.Pi, PromptTemplate = "process {{item}}", DataContract = new(), NextNodeId = "end" },
+            new EndWorkflowNode { NodeId = "end", Name = "End" }
+        ], "start");
+        var task = await CreateTaskAsync(taskRepo, wf, "{\"items\":[]}");
+
+        var exec = await svc.StartRunAsync(task, WorkflowTriggerSource.Manual);
+
+        Assert.Equal(Models.TaskStatus.Completed, exec.Status);
+        Assert.Equal(0, runtime.SendCalls);
+    }
+
+    [Fact]
+    public async Task Parallel_SingleBranch_Completes()
+    {
+        var (svc, execRepo, taskRepo, runtime) = CreateService();
+        runtime.EnqueueSend(ValidEnvelope);
+
+        var wf = WorkflowJson([
+            new StartWorkflowNode { NodeId = "start", Name = "Start", NextNodeId = "prepare" },
+            new PrepareWorkspaceWorkflowNode { NodeId = "prepare", Name = "Prepare", NextNodeId = "par" },
+            new ParallelWorkflowNode
+            {
+                NodeId = "par",
+                Name = "Parallel",
+                BranchStartNodeIds = ["br1"],
+                JoinMode = WorkflowParallelJoinMode.AllCompleted,
+                NextNodeId = "end"
+            },
+            new AgentWorkflowNode { NodeId = "br1", Name = "Branch1", Backend = WorkflowBackend.Pi, PromptTemplate = "work", DataContract = new(), NextNodeId = "end" },
+            new EndWorkflowNode { NodeId = "end", Name = "End" }
+        ], "start");
+        var task = await CreateTaskAsync(taskRepo, wf);
+
+        var exec = await svc.StartRunAsync(task, WorkflowTriggerSource.Manual);
+
+        Assert.Equal(Models.TaskStatus.Completed, exec.Status);
+        Assert.Equal(1, runtime.SendCalls);
+    }
 }

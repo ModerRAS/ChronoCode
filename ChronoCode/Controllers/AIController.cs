@@ -1,5 +1,4 @@
 using ChronoCode.Models;
-using ChronoCode.Models.AI;
 using ChronoCode.Models.DTOs;
 using ChronoCode.Services;
 using FluentValidation;
@@ -15,7 +14,7 @@ public class AIController : ControllerBase
     private readonly ITaskRepository _taskRepository;
     private readonly ISchedulerService _schedulerService;
     private readonly ILogger<AIController> _logger;
-    private readonly IOpencodeClient _opencodeClient;
+    private readonly IChatRuntimeService _chatRuntimeService;
     private readonly IValidator<ChatMessageRequest> _chatMessageRequestValidator;
     private readonly IValidator<CreateTaskDto> _createTaskValidator;
     private readonly IValidator<UpdateTaskDto> _updateTaskValidator;
@@ -24,7 +23,7 @@ public class AIController : ControllerBase
         ITaskRepository taskRepository,
         ISchedulerService schedulerService,
         ILogger<AIController> logger,
-        IOpencodeClient opencodeClient,
+        IChatRuntimeService chatRuntimeService,
         IValidator<ChatMessageRequest> chatMessageRequestValidator,
         IValidator<CreateTaskDto> createTaskValidator,
         IValidator<UpdateTaskDto> updateTaskValidator)
@@ -32,7 +31,7 @@ public class AIController : ControllerBase
         _taskRepository = taskRepository;
         _schedulerService = schedulerService;
         _logger = logger;
-        _opencodeClient = opencodeClient;
+        _chatRuntimeService = chatRuntimeService;
         _chatMessageRequestValidator = chatMessageRequestValidator;
         _createTaskValidator = createTaskValidator;
         _updateTaskValidator = updateTaskValidator;
@@ -47,63 +46,18 @@ public class AIController : ControllerBase
             return ValidationError(requestValidation);
         }
 
-        var tempPath = Path.Combine(Path.GetTempPath(), "chronocode-chat", Guid.NewGuid().ToString());
-
         try
         {
-            if (!_opencodeClient.IsServerAvailable())
-            {
-                return StatusCode(503, new { error = new { code = "SERVER_UNAVAILABLE", message = "AI server is not available. Please start the server first." } });
-            }
+            var cancellationToken = HttpContext?.RequestAborted ?? CancellationToken.None;
+            var response = await _chatRuntimeService.SendChatMessageAsync(request.Message, cancellationToken);
 
-            Directory.CreateDirectory(tempPath);
-
-            var sessionId = await _opencodeClient.CreateSessionAsync(tempPath);
-            
-            var prompt = $@"You are a task management assistant. The user wants to manage scheduled tasks.
-
-Available actions:
-- create_task: Create a new scheduled task
-- update_task: Update an existing task
-- delete_task: Delete a task
-- trigger_task: Manually trigger a task execution
-
-User request: {request.Message}
-
-Respond ONLY with a JSON object in this format:
-{{
-  ""action"": ""create_task|update_task|delete_task|trigger_task"",
-  ""task_id"": ""uuid if updating/deleting/triggering, null otherwise"",
-  ""task"": {{
-    ""name"": ""task name"",
-    ""cron"": ""cron expression (e.g., 0 2 * * *)"",
-    ""repository"": ""https://github.com/owner/repo"",
-    ""base_branch"": ""main"",
-    ""branch_strategy"": ""new|reuse"",
-    ""prompt"": ""what the AI should do"",
-    ""max_runtime_seconds"": 600,
-    ""max_file_changes"": 50,
-    ""require_plan_review"": true,
-    ""is_enabled"": true
-  }}
-}}
-
-If the user just wants information or help, respond with a JSON containing:
-{{
-  ""action"": """",
-  ""task"": null,
-  ""error"": {{ ""code"": ""INFO"", ""message"": ""your helpful response"" }}
-}}";
-
-            var response = await _opencodeClient.SendPromptAsync(sessionId, prompt, tempPath);
-            
             try
             {
                 var jsonMatch = System.Text.RegularExpressions.Regex.Match(response, @"```json\s*([\s\S]*?)\s*```|$");
-                var jsonStr = jsonMatch.Success && jsonMatch.Value.StartsWith("```") 
-                    ? jsonMatch.Groups[1].Value 
+                var jsonStr = jsonMatch.Success && jsonMatch.Value.StartsWith("```")
+                    ? jsonMatch.Groups[1].Value
                     : response;
-                
+
                 var structuredResponse = System.Text.Json.JsonSerializer.Deserialize<Models.AI.AIStructuredResponse>(jsonStr);
                 if (structuredResponse != null)
                 {
@@ -115,60 +69,49 @@ If the user just wants information or help, respond with a JSON containing:
                 _logger.LogDebug(ex, "Failed to parse AI JSON response. Payload: {Response}", response);
             }
 
-            return Ok(new Models.AI.AIStructuredResponse 
-            { 
-                Error = new Models.AI.AIError 
-                { 
-                    Code = "INFO", 
-                    Message = response 
-                } 
+            return Ok(new Models.AI.AIStructuredResponse
+            {
+                Error = new Models.AI.AIError
+                {
+                    Code = "INFO",
+                    Message = response
+                }
             });
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error handling chat message");
-            return StatusCode(500, new { error = new { code = "INTERNAL_ERROR", message = "An unexpected error occurred while processing your request." } });
-        }
-        finally
-        {
-            try
-            {
-                if (Directory.Exists(tempPath))
-                {
-                    Directory.Delete(tempPath, recursive: true);
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Failed to clean up AI temp directory {TempPath}", tempPath);
-            }
+            _logger.LogError(ex, "Error handling AI chat message");
+            return StatusCode(500, new { error = new { code = "INTERNAL_ERROR", message = ex.Message } });
         }
     }
 
-    [HttpPost("ai")]
-    public async Task<IActionResult> HandleAIStructuredResponse([FromBody] AIStructuredResponse response)
+[HttpPost("ai")]
+    public async Task<IActionResult> ExecuteStructuredResponse([FromBody] Models.AI.AIStructuredResponse response)
     {
-        if (!AIActions.IsValid(response.Action))
+        if (!Models.AI.AIActions.IsValid(response.Action))
         {
-            return BadRequest(new { error = new { code = "INVALID_ACTION", message = $"Invalid action: {response.Action}" } });
+            return BadRequest(new { error = new { code = "VALIDATION_ERROR", message = "Invalid AI action" } });
         }
 
-        switch (response.Action)
+        try
         {
-            case AIActions.CreateTask:
-                return await HandleCreateTask(response.Task);
-            case AIActions.UpdateTask:
-                return await HandleUpdateTask(response.TaskId, response.Task);
-            case AIActions.DeleteTask:
-                return await HandleDeleteTask(response.TaskId);
-            case AIActions.TriggerTask:
-                return await HandleTriggerTask(response.TaskId);
-            default:
-                return BadRequest(new { error = new { code = "INVALID_ACTION", message = "Unknown action" } });
+            return response.Action switch
+            {
+                Models.AI.AIActions.CreateTask => await HandleCreateTask(response.Task),
+                Models.AI.AIActions.UpdateTask => await HandleUpdateTask(response.TaskId, response.Task),
+                Models.AI.AIActions.DeleteTask => await HandleDeleteTask(response.TaskId),
+                Models.AI.AIActions.TriggerTask => await HandleTriggerTask(response.TaskId),
+                _ => BadRequest(new { error = new { code = "VALIDATION_ERROR", message = "Unsupported AI action" } })
+            };
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error executing AI structured response");
+            return StatusCode(500, new { error = new { code = "INTERNAL_ERROR", message = ex.Message } });
         }
     }
 
-    private async Task<IActionResult> HandleCreateTask(AITaskDto? dto)
+    private async Task<IActionResult> HandleCreateTask(Models.AI.AITaskDto? dto)
     {
         if (dto == null)
         {
@@ -183,11 +126,16 @@ If the user just wants information or help, respond with a JSON containing:
         }
 
         var task = await _taskRepository.CreateAsync(createDto);
+        if (task.IsEnabled)
+        {
+            await _schedulerService.SyncTaskAsync(task);
+        }
+
         _logger.LogInformation("AI created task {TaskId}: {TaskName}", task.Id, task.Name);
         return CreatedAtAction(nameof(TasksController.GetTask), "Tasks", new { id = task.Id }, new { id = task.Id, name = task.Name });
     }
 
-    private async Task<IActionResult> HandleUpdateTask(Guid? taskId, AITaskDto? dto)
+    private async Task<IActionResult> HandleUpdateTask(Guid? taskId, Models.AI.AITaskDto? dto)
     {
         if (taskId == null)
         {
@@ -207,11 +155,14 @@ If the user just wants information or help, respond with a JSON containing:
             RepositoryUrl = createDto.RepositoryUrl,
             BaseBranch = createDto.BaseBranch,
             BranchStrategy = createDto.BranchStrategy,
-            Prompt = createDto.Prompt,
             MaxRuntimeSeconds = createDto.MaxRuntimeSeconds,
             MaxFileChanges = createDto.MaxFileChanges,
-            RequirePlanReview = createDto.RequirePlanReview,
-            IsEnabled = createDto.IsEnabled
+            IsEnabled = createDto.IsEnabled,
+            WorkflowDefinitionJson = createDto.WorkflowDefinitionJson,
+            DefaultInputsJson = createDto.DefaultInputsJson,
+            RuntimeBackend = createDto.RuntimeBackend,
+            MaxConcurrentRuns = createDto.MaxConcurrentRuns,
+            NodeFailurePolicyJson = createDto.NodeFailurePolicyJson
         };
 
         var validationResult = await _updateTaskValidator.ValidateAsync(updateDto);
@@ -221,6 +172,10 @@ If the user just wants information or help, respond with a JSON containing:
         }
 
         var task = await _taskRepository.UpdateAsync(taskId.Value, updateDto);
+        if (task.IsEnabled)
+        {
+            await _schedulerService.SyncTaskAsync(task);
+        }
         _logger.LogInformation("AI updated task {TaskId}", taskId);
         return Ok(new { id = task.Id, name = task.Name });
     }
@@ -238,6 +193,7 @@ If the user just wants information or help, respond with a JSON containing:
             return NotFound(new { error = new { code = "NOT_FOUND", message = $"Task {taskId} not found" } });
         }
 
+        await _schedulerService.UnscheduleTaskAsync(taskId.Value);
         _logger.LogInformation("AI deleted task {TaskId}", taskId);
         return NoContent();
     }
@@ -252,12 +208,12 @@ If the user just wants information or help, respond with a JSON containing:
         var task = await _taskRepository.GetByIdAsync(taskId.Value);
         if (task == null)
         {
-            return NotFound(new { error = new { code = "NOT_FOUND", message = $"Task {taskId} not found" } });
+            return NotFound(new { error = new { code = "NOT_FOUND", message = "Task not found" } });
         }
 
-        _schedulerService.TriggerTask(taskId.Value);
+        await _schedulerService.TriggerTaskAsync(taskId.Value);
         _logger.LogInformation("AI triggered task {TaskId}", taskId);
-        return Accepted(new { message = "Task triggered", taskId });
+        return Ok(new { id = taskId.Value });
     }
 
     private BadRequestObjectResult ValidationError(ValidationResult validationResult)

@@ -1,6 +1,8 @@
 using ChronoCode.Models;
 using ChronoCode.Models.DTOs;
 using ChronoCode.Services;
+using ChronoCode.Models.Workflow;
+using FluentValidation;
 using Microsoft.AspNetCore.Mvc;
 
 namespace ChronoCode.Controllers;
@@ -12,31 +14,53 @@ public class TasksController : ControllerBase
     private readonly ITaskRepository _taskRepository;
     private readonly ISchedulerService _schedulerService;
     private readonly IExecutionRepository _executionRepository;
-    private readonly IAgentRuntime _agentRuntime;
+    private readonly IAgentRuntimeResolver _resolver;
+    private readonly IWorkflowRunService _workflowRunService;
+    private readonly IValidator<CreateTaskDto> _createTaskValidator;
+    private readonly IValidator<UpdateTaskDto> _updateTaskValidator;
     private readonly ILogger<TasksController> _logger;
 
     public TasksController(
         ITaskRepository taskRepository,
         ISchedulerService schedulerService,
         IExecutionRepository executionRepository,
-        IAgentRuntime agentRuntime,
+        IAgentRuntimeResolver resolver,
+        IWorkflowRunService workflowRunService,
+        IValidator<CreateTaskDto> createTaskValidator,
+        IValidator<UpdateTaskDto> updateTaskValidator,
         ILogger<TasksController> logger)
     {
         _taskRepository = taskRepository;
         _schedulerService = schedulerService;
         _executionRepository = executionRepository;
-        _agentRuntime = agentRuntime;
+        _resolver = resolver;
+        _workflowRunService = workflowRunService;
+        _createTaskValidator = createTaskValidator;
+        _updateTaskValidator = updateTaskValidator;
         _logger = logger;
     }
 
     [HttpPost]
     public async Task<ActionResult<TaskDto>> CreateTask([FromBody] CreateTaskDto dto)
     {
+        var validation = await _createTaskValidator.ValidateAsync(dto);
+        if (!validation.IsValid)
+        {
+            return BadRequest(new
+            {
+                error = new
+                {
+                    code = "VALIDATION_ERROR",
+                    message = string.Join("; ", validation.Errors.Select(e => e.ErrorMessage))
+                }
+            });
+        }
+
         var task = await _taskRepository.CreateAsync(dto);
 
         if (task.IsEnabled)
         {
-            _schedulerService.ScheduleTask(task);
+            await _schedulerService.SyncTaskAsync(task);
         }
 
         return CreatedAtAction(nameof(GetTask), new { id = task.Id }, MapToDto(task));
@@ -54,7 +78,9 @@ public class TasksController : ControllerBase
     {
         var task = await _taskRepository.GetByIdAsync(id);
         if (task == null)
+        {
             return NotFound();
+        }
 
         return Ok(MapToDto(task));
     }
@@ -62,14 +88,29 @@ public class TasksController : ControllerBase
     [HttpPut("{id:guid}")]
     public async Task<ActionResult<TaskDto>> UpdateTask(Guid id, [FromBody] UpdateTaskDto dto)
     {
+        var validation = await _updateTaskValidator.ValidateAsync(dto);
+        if (!validation.IsValid)
+        {
+            return BadRequest(new
+            {
+                error = new
+                {
+                    code = "VALIDATION_ERROR",
+                    message = string.Join("; ", validation.Errors.Select(e => e.ErrorMessage))
+                }
+            });
+        }
+
         try
         {
             var task = await _taskRepository.UpdateAsync(id, dto);
-
-            _schedulerService.UnscheduleTask(id);
             if (task.IsEnabled)
             {
-                _schedulerService.ScheduleTask(task);
+                await _schedulerService.SyncTaskAsync(task);
+            }
+            else
+            {
+                await _schedulerService.UnscheduleTaskAsync(id);
             }
 
             return Ok(MapToDto(task));
@@ -83,11 +124,12 @@ public class TasksController : ControllerBase
     [HttpDelete("{id:guid}")]
     public async Task<IActionResult> DeleteTask(Guid id)
     {
-        _schedulerService.UnscheduleTask(id);
+        await _schedulerService.UnscheduleTaskAsync(id);
         var result = await _taskRepository.DeleteAsync(id);
-
         if (!result)
+        {
             return NotFound();
+        }
 
         return NoContent();
     }
@@ -97,9 +139,11 @@ public class TasksController : ControllerBase
     {
         var task = await _taskRepository.GetByIdAsync(id);
         if (task == null)
+        {
             return NotFound();
+        }
 
-        _schedulerService.TriggerTask(id);
+        await _schedulerService.TriggerTaskAsync(id);
         return Accepted();
     }
 
@@ -123,104 +167,98 @@ public class TasksController : ControllerBase
         }).ToList());
     }
 
-    [HttpGet("executions/{executionId:guid}/session")]
-    public async Task<ActionResult<ExecutionSessionDto>> GetExecutionSession(Guid executionId)
+    [HttpGet("executions/{executionId:guid}/nodes")]
+    public async Task<ActionResult<List<NodeExecutionDto>>> GetNodeExecutions(Guid executionId)
     {
-        var execution = await _executionRepository.GetByIdAsync(executionId);
-        if (execution == null)
+        var nodes = await _executionRepository.GetNodeExecutionsAsync(executionId);
+        return Ok(nodes.Select(MapToNodeExecutionDto).ToList());
+    }
+
+    [HttpGet("executions/{executionId:guid}/nodes/{nodeExecutionId:guid}/session")]
+    public async Task<ActionResult<ExecutionSessionDto>> GetNodeSession(Guid executionId, Guid nodeExecutionId)
+    {
+        var nodeExec = await _workflowRunService.GetNodeExecutionAsync(executionId, nodeExecutionId);
+        if (nodeExec == null)
         {
             return NotFound();
         }
 
-        var liveSession = await _agentRuntime.GetExecutionSessionAsync(executionId);
-        var backend = liveSession?.Backend ?? execution.AgentBackend ?? _agentRuntime.GetStatus().Backend;
-        var supportsPersistentSessions = SupportsPersistentSessions(backend);
-        var supportsSupplementalMessages = liveSession?.SupportsSupplementalMessages ?? SupportsSupplementalMessages(backend);
-        var sessionId = liveSession?.SessionId ?? execution.AgentSessionId;
-        var sessionFile = liveSession?.SessionFile ?? execution.AgentSessionFile;
-        var workingDirectory = liveSession?.WorkingDirectory ?? execution.AgentWorkingDirectory;
+        var backend = nodeExec.AgentBackend ?? _resolver.GetStatus(null).Backend;
+        var supportsPersistentSessions = string.Equals(backend, "pi", StringComparison.OrdinalIgnoreCase);
+        var supportsSupplementalMessages = string.Equals(backend, "pi", StringComparison.OrdinalIgnoreCase);
 
         return Ok(new ExecutionSessionDto
         {
             ExecutionId = executionId,
+            NodeExecutionId = nodeExecutionId,
             Backend = backend,
-            SessionId = sessionId,
-            SessionFile = sessionFile,
-            WorkingDirectory = workingDirectory,
-            IsLive = liveSession != null,
+            SessionId = nodeExec.AgentSessionId,
+            SessionFile = nodeExec.AgentSessionFile,
+            WorkingDirectory = nodeExec.AgentWorkingDirectory,
+            IsLive = false,
             SupportsPersistentSessions = supportsPersistentSessions,
             SupportsSupplementalMessages = supportsSupplementalMessages,
-            CanResume = supportsPersistentSessions && (!string.IsNullOrWhiteSpace(sessionFile) || !string.IsNullOrWhiteSpace(sessionId))
+            CanResume = supportsPersistentSessions
+                && (!string.IsNullOrWhiteSpace(nodeExec.AgentSessionFile) || !string.IsNullOrWhiteSpace(nodeExec.AgentSessionId))
         });
     }
 
-    [HttpPost("executions/{executionId:guid}/resume")]
-    public async Task<ActionResult<ExecutionSessionDto>> ResumeExecutionSession(Guid executionId, [FromBody] ResumeExecutionSessionDto? dto = null)
+    [HttpPost("executions/{executionId:guid}/nodes/{nodeExecutionId:guid}/resume")]
+    public async Task<ActionResult<ExecutionSessionDto>> ResumeNodeSession(Guid executionId, Guid nodeExecutionId, [FromBody] ResumeExecutionSessionDto? dto = null)
     {
-        var execution = await _executionRepository.GetByIdAsync(executionId);
-        if (execution == null)
+        var nodeExec = await _workflowRunService.GetNodeExecutionAsync(executionId, nodeExecutionId);
+        if (nodeExec == null)
         {
             return NotFound();
         }
 
-        var liveSession = await _agentRuntime.GetExecutionSessionAsync(executionId);
-        if (liveSession != null)
+        if (string.IsNullOrWhiteSpace(nodeExec.AgentSessionFile) && string.IsNullOrWhiteSpace(nodeExec.AgentSessionId))
         {
-            return Ok(ToExecutionSessionDto(executionId, liveSession, isLive: true));
+            return Conflict(new
+            {
+                error = new
+                {
+                    code = "VALIDATION_ERROR",
+                    message = "Node execution does not have persisted session metadata to resume."
+                }
+            });
         }
 
-        var status = _agentRuntime.GetStatus();
-        var backend = execution.AgentBackend ?? status.Backend;
-        if (!string.Equals(backend, status.Backend, StringComparison.OrdinalIgnoreCase))
+        var resumed = await _workflowRunService.ResumeNodeSessionAsync(executionId, nodeExecutionId, dto?.SessionRef, HttpContext.RequestAborted);
+        return Ok(new ExecutionSessionDto
         {
-            return Conflict(new { Error = $"Execution was created with backend '{backend}', but current runtime is '{status.Backend}'." });
-        }
-
-        if (!SupportsPersistentSessions(backend))
-        {
-            return Conflict(new { Error = $"Backend '{backend}' does not support session resume." });
-        }
-
-        var sessionRef = string.IsNullOrWhiteSpace(dto?.SessionRef)
-            ? execution.AgentSessionFile ?? execution.AgentSessionId
-            : dto.SessionRef;
-
-        if (string.IsNullOrWhiteSpace(sessionRef) || string.IsNullOrWhiteSpace(execution.AgentWorkingDirectory))
-        {
-            return Conflict(new { Error = "Execution does not have persisted session metadata to resume." });
-        }
-
-        var resumed = await _agentRuntime.ResumeExecutionSessionAsync(
-            executionId,
-            execution.AgentWorkingDirectory,
-            sessionRef,
-            chunk => _executionRepository.AddLogAsync(executionId, "Debug", chunk),
-            HttpContext.RequestAborted);
-
-        await _executionRepository.UpdateSessionAsync(executionId, resumed);
-        await _executionRepository.AddLogAsync(executionId, "Info", "Resumed execution session", sessionRef);
-
-        return Ok(ToExecutionSessionDto(executionId, resumed, isLive: true));
+            ExecutionId = executionId,
+            NodeExecutionId = nodeExecutionId,
+            Backend = resumed.Backend,
+            SessionId = resumed.SessionId,
+            SessionFile = resumed.SessionFile,
+            WorkingDirectory = resumed.WorkingDirectory,
+            IsLive = true,
+            SupportsPersistentSessions = string.Equals(resumed.Backend, "pi", StringComparison.OrdinalIgnoreCase),
+            SupportsSupplementalMessages = resumed.SupportsSupplementalMessages,
+            CanResume = true
+        });
     }
 
-    [HttpPost("executions/{executionId:guid}/message")]
-    public async Task<IActionResult> SendExecutionMessage(Guid executionId, [FromBody] ExecutionMessageDto dto)
+    [HttpPost("executions/{executionId:guid}/nodes/{nodeExecutionId:guid}/message")]
+    public async Task<IActionResult> SendNodeMessage(Guid executionId, Guid nodeExecutionId, [FromBody] ExecutionMessageDto dto)
     {
         if (string.IsNullOrWhiteSpace(dto.Message))
         {
-            return BadRequest(new { Error = "Message is required." });
+            return BadRequest(new
+            {
+                error = new
+                {
+                    code = "VALIDATION_ERROR",
+                    message = "Message is required."
+                }
+            });
         }
 
-        var execution = await _executionRepository.GetByIdAsync(executionId);
-        if (execution == null)
+        var nodeExec = await _workflowRunService.GetNodeExecutionAsync(executionId, nodeExecutionId);
+        if (nodeExec == null)
         {
             return NotFound();
-        }
-
-        var session = await _agentRuntime.GetExecutionSessionAsync(executionId);
-        if (session == null)
-        {
-            return Conflict(new { Error = "Execution has no live agent session." });
         }
 
         var mode = dto.Mode.Trim().ToLowerInvariant() switch
@@ -230,30 +268,33 @@ public class TasksController : ControllerBase
             _ => AgentMessageMode.Steer
         };
 
-        var result = await _agentRuntime.SendMessageAsync(
+        var result = await _workflowRunService.SendNodeMessageAsync(
             executionId,
-            session.WorkingDirectory,
+            nodeExecutionId,
             dto.Message,
-            mode,
-            chunk => _executionRepository.AddLogAsync(executionId, "Debug", chunk),
+            mode.ToString(),
             HttpContext.RequestAborted);
-
-        await _executionRepository.AddLogAsync(executionId, "Info", $"Queued supplemental message ({mode})", dto.Message);
 
         return Ok(new
         {
             ExecutionId = executionId,
+            NodeExecutionId = nodeExecutionId,
             Mode = mode.ToString(),
-            Result = result,
-            SessionId = session.SessionId,
-            SessionFile = session.SessionFile
+            Result = result
         });
     }
 
-    [HttpGet("server/status")]
-    public async Task<ActionResult> GetServerStatus()
+    [HttpPost("executions/{executionId:guid}/approval/{nodeExecutionId:guid}")]
+    public async Task<IActionResult> ApproveNode(Guid executionId, Guid nodeExecutionId, [FromBody] ApprovalRequestDto dto)
     {
-        var status = _agentRuntime.GetStatus();
+        await _workflowRunService.ApproveNodeAsync(executionId, nodeExecutionId, dto.Approved, dto.Reason, HttpContext.RequestAborted);
+        return Ok();
+    }
+
+    [HttpGet("server/status")]
+    public ActionResult GetServerStatus()
+    {
+        var status = _resolver.GetStatus(null);
         return Ok(new
         {
             Backend = status.Backend,
@@ -269,8 +310,8 @@ public class TasksController : ControllerBase
     {
         try
         {
-            await _agentRuntime.EnsureReadyAsync();
-            var status = _agentRuntime.GetStatus();
+            await _resolver.Get(null).EnsureReadyAsync();
+            var status = _resolver.GetStatus(null);
             return Ok(new
             {
                 Backend = status.Backend,
@@ -281,41 +322,15 @@ public class TasksController : ControllerBase
         }
         catch (Exception ex)
         {
-            return StatusCode(500, new { Error = ex.Message });
+            return StatusCode(500, new { error = new { code = "INTERNAL_ERROR", message = ex.Message } });
         }
     }
 
     [HttpPost("server/stop")]
     public async Task<IActionResult> StopServer()
     {
-        await _agentRuntime.StopAsync();
+        await _resolver.Get(null).StopAsync();
         return Ok();
-    }
-
-    private static bool SupportsPersistentSessions(string? backend)
-    {
-        return string.Equals(backend, "pi", StringComparison.OrdinalIgnoreCase);
-    }
-
-    private static bool SupportsSupplementalMessages(string? backend)
-    {
-        return string.Equals(backend, "pi", StringComparison.OrdinalIgnoreCase);
-    }
-
-    private static ExecutionSessionDto ToExecutionSessionDto(Guid executionId, AgentExecutionSession session, bool isLive)
-    {
-        return new ExecutionSessionDto
-        {
-            ExecutionId = executionId,
-            Backend = session.Backend,
-            SessionId = session.SessionId,
-            SessionFile = session.SessionFile,
-            WorkingDirectory = session.WorkingDirectory,
-            IsLive = isLive,
-            SupportsPersistentSessions = SupportsPersistentSessions(session.Backend),
-            SupportsSupplementalMessages = session.SupportsSupplementalMessages,
-            CanResume = SupportsPersistentSessions(session.Backend) && (!string.IsNullOrWhiteSpace(session.SessionFile) || !string.IsNullOrWhiteSpace(session.SessionId))
-        };
     }
 
     private static TaskDto MapToDto(ScheduledTask task)
@@ -328,15 +343,23 @@ public class TasksController : ControllerBase
             RepositoryUrl = task.RepositoryUrl,
             BaseBranch = task.BaseBranch,
             BranchStrategy = task.BranchStrategy,
-            Prompt = task.Prompt,
             MaxRuntimeSeconds = task.MaxRuntimeSeconds,
             MaxFileChanges = task.MaxFileChanges,
-            RequirePlanReview = task.RequirePlanReview,
+            IsEnabled = task.IsEnabled,
+            WorkflowVersion = task.WorkflowVersion,
+            WorkflowDefinitionJson = task.WorkflowDefinitionJson,
+            DefaultInputsJson = task.DefaultInputsJson,
+            RuntimeBackend = task.RuntimeBackend,
+            MaxConcurrentRuns = task.MaxConcurrentRuns,
+            NodeFailurePolicyJson = task.NodeFailurePolicyJson,
             CreatedAt = task.CreatedAt,
             LastRunAt = task.LastRunAt,
             LastStatus = task.LastStatus,
-            IsEnabled = task.IsEnabled,
-            LastError = task.LastError
+            LastError = task.LastError,
+            NextRunAt = task.NextRunAt,
+            LastQueuedAt = task.LastQueuedAt,
+            SchedulerStatus = task.SchedulerStatus,
+            SchedulerHeartbeatAt = task.SchedulerHeartbeatAt
         };
     }
 
@@ -349,15 +372,40 @@ public class TasksController : ControllerBase
             StartedAt = execution.StartedAt,
             CompletedAt = execution.CompletedAt,
             Status = execution.Status,
+            WorkflowVersion = execution.WorkflowVersion,
+            CurrentNodeId = execution.CurrentNodeId,
+            TriggerSource = execution.TriggerSource,
             BranchName = execution.BranchName,
             CommitSha = execution.CommitSha,
             PrUrl = execution.PrUrl,
             FilesChanged = execution.FilesChanged,
-            ErrorMessage = execution.ErrorMessage,
-            AgentBackend = execution.AgentBackend,
-            AgentSessionId = execution.AgentSessionId,
-            AgentSessionFile = execution.AgentSessionFile,
-            AgentWorkingDirectory = execution.AgentWorkingDirectory
+            ErrorMessage = execution.ErrorMessage
+        };
+    }
+
+    private static NodeExecutionDto MapToNodeExecutionDto(WorkflowNodeExecution node)
+    {
+        return new NodeExecutionDto
+        {
+            Id = node.Id,
+            ExecutionId = node.ExecutionId,
+            NodeId = node.NodeId,
+            NodeType = node.NodeType,
+            ScopeKey = node.ScopeKey,
+            Attempt = node.Attempt,
+            Status = node.Status,
+            StartedAt = node.StartedAt,
+            CompletedAt = node.CompletedAt,
+            OutputJson = node.OutputJson,
+            ValidationError = node.ValidationError,
+            AgentBackend = node.AgentBackend,
+            AgentSessionId = node.AgentSessionId,
+            AgentSessionFile = node.AgentSessionFile,
+            AgentWorkingDirectory = node.AgentWorkingDirectory,
+            FailureReason = node.FailureReason,
+            NextRetryAt = node.NextRetryAt,
+            RetryCount = node.RetryCount,
+            LeaseExpiresAt = node.LeaseExpiresAt
         };
     }
 }

@@ -66,4 +66,6 @@ test-results/
 
 # Local app setup
 ChronoCode/appsettings.Local.json
-ChronoCode/data/
+ChronoCode/storage/
+.omo/
+.ralph/

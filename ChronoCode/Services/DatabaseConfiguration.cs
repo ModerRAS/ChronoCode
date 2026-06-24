@@ -9,8 +9,8 @@ public static class DatabaseConfiguration
     public const string LocalConfigFileName = "appsettings.Local.json";
     public const string PostgreSqlProvider = "postgresql";
     public const string SqliteProvider = "sqlite";
-    public const string DefaultSqlitePath = "data/chronocode.db";
-    private const string SetupModeSqlitePath = "data/.chronocode-setup.db";
+    public const string DefaultSqlitePath = "storage/chronocode.db";
+    private const string SetupModeSqlitePath = "storage/.chronocode-setup.db";
 
     public static string? NormalizeProvider(string? provider)
     {
@@ -29,34 +29,36 @@ public static class DatabaseConfiguration
 
     public static bool IsConfigured(IConfiguration configuration, IHostEnvironment environment)
     {
-        var provider = NormalizeProvider(configuration["Database:Provider"]);
-        return provider switch
-        {
-            PostgreSqlProvider => !string.IsNullOrWhiteSpace(configuration.GetConnectionString("DefaultConnection")),
-            SqliteProvider => !string.IsNullOrWhiteSpace(configuration.GetConnectionString("SqliteConnection")),
-            _ => false
-        };
+        return CreateRuntimeState(configuration).Initialized;
     }
 
-    public static void Configure(DbContextOptionsBuilder options, IConfiguration configuration, IHostEnvironment environment)
+    public static bool IsConfigured(DatabaseRuntimeState state)
+    {
+        return state.Initialized;
+    }
+
+    public static DatabaseRuntimeState CreateRuntimeState(IConfiguration configuration)
     {
         var provider = NormalizeProvider(configuration["Database:Provider"]);
-        if (!IsConfigured(configuration, environment) || provider == null)
+        var connectionString = provider switch
+        {
+            PostgreSqlProvider => configuration.GetConnectionString("DefaultConnection"),
+            SqliteProvider => configuration.GetConnectionString("SqliteConnection"),
+            _ => null
+        };
+
+        return new DatabaseRuntimeState(provider, connectionString);
+    }
+
+    public static void Configure(DbContextOptionsBuilder options, DatabaseRuntimeState state, IHostEnvironment environment)
+    {
+        if (!state.Initialized || state.Provider == null || string.IsNullOrWhiteSpace(state.ConnectionString))
         {
             Configure(options, SqliteProvider, BuildSqliteConnectionString(SetupModeSqlitePath, environment.ContentRootPath));
             return;
         }
 
-        var connectionString = provider == PostgreSqlProvider
-            ? configuration.GetConnectionString("DefaultConnection")
-            : configuration.GetConnectionString("SqliteConnection");
-
-        if (string.IsNullOrWhiteSpace(connectionString))
-        {
-            throw new InvalidOperationException($"Connection string for database provider '{provider}' is missing.");
-        }
-
-        Configure(options, provider, connectionString);
+        Configure(options, state.Provider, state.ConnectionString);
     }
 
     public static void Configure(DbContextOptionsBuilder options, string provider, string connectionString)

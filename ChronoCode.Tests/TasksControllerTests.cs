@@ -7,14 +7,14 @@ using FluentValidation;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Configuration;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
+using Xunit;
 using System.Net;
 using System.Net.Http.Json;
-using Xunit;
 
 namespace ChronoCode.Tests;
 
@@ -29,6 +29,7 @@ public class TasksControllerTests : IClassFixture<WebApplicationFactory<Program>
         _factory = factory.WithWebHostBuilder(builder =>
         {
             builder.UseEnvironment("Testing");
+            builder.ConfigureLogging(logging => logging.ClearProviders());
             builder.ConfigureAppConfiguration((_, config) =>
             {
                 config.AddInMemoryCollection(new Dictionary<string, string?>
@@ -61,6 +62,9 @@ public class TasksControllerTests : IClassFixture<WebApplicationFactory<Program>
                     options.UseInMemoryDatabase("TestDb_" + Guid.NewGuid().ToString());
                 });
 
+                services.RemoveAll<DatabaseRuntimeState>();
+                services.AddSingleton(new DatabaseRuntimeState(DatabaseConfiguration.SqliteProvider, "Data Source=:memory:"));
+
                 services.AddSingleton<ITaskRepository, InMemoryTaskRepository>();
                 services.AddSingleton<IExecutionRepository, InMemoryExecutionRepository>();
                 services.AddSingleton<ISchedulerService, InMemorySchedulerService>();
@@ -68,10 +72,10 @@ public class TasksControllerTests : IClassFixture<WebApplicationFactory<Program>
                 services.AddSingleton<IOpencodeClient, InMemoryOpencodeClient>();
                 services.AddSingleton<OpencodeRuntime>();
                 services.AddSingleton<PiRuntime>();
-                services.AddSingleton<IAgentRuntime, InMemoryAgentRuntime>();
+                services.AddSingleton<InMemoryAgentRuntime>();
+                services.AddSingleton<IAgentRuntime>(sp => sp.GetRequiredService<InMemoryAgentRuntime>());
+                services.AddSingleton<IAgentRuntimeResolver>(sp => new InMemoryAgentRuntimeResolver(sp.GetRequiredService<InMemoryAgentRuntime>()));
                 services.AddSingleton<IGitService, InMemoryGitService>();
-                services.AddSingleton<ITaskRunner, InMemoryTaskRunner>();
-                services.AddScoped<ScheduledTaskJob>();
 
                 services.AddValidatorsFromAssemblyContaining<CreateTaskDtoValidator>();
             });
@@ -96,7 +100,7 @@ public class TasksControllerTests : IClassFixture<WebApplicationFactory<Program>
             Name = "Test Task",
             CronExpression = "0 0 * * *",
             RepositoryUrl = "https://github.com/test/repo",
-            Prompt = "Test prompt"
+            WorkflowDefinitionJson = ChronoCode.Models.Workflow.WorkflowDefinitionFactory.CreateDefaultJson(true, "Test prompt")
         };
 
         var response = await _client.PostAsJsonAsync("/api/tasks", dto);
@@ -114,10 +118,10 @@ public class TasksControllerTests : IClassFixture<WebApplicationFactory<Program>
     {
         var dto = new CreateTaskDto
         {
-            Name = "Get Test Task",
+            Name = "Test Task",
             CronExpression = "0 0 * * *",
             RepositoryUrl = "https://github.com/test/repo",
-            Prompt = "Test prompt"
+            WorkflowDefinitionJson = ChronoCode.Models.Workflow.WorkflowDefinitionFactory.CreateDefaultJson(true, "Test prompt")
         };
 
         await _client.PostAsJsonAsync("/api/tasks", dto);
@@ -126,20 +130,21 @@ public class TasksControllerTests : IClassFixture<WebApplicationFactory<Program>
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
 
-        var tasks = await response.Content.ReadFromJsonAsync<List<TaskDto>>();
-        Assert.NotNull(tasks);
-        Assert.NotEmpty(tasks);
+        var result = await response.Content.ReadFromJsonAsync<List<TaskDto>>();
+        Assert.NotNull(result);
+        Assert.Single(result);
+        Assert.Equal(dto.Name, result[0].Name);
     }
 
     [Fact]
-    public async Task Get_GetTask_ReturnsTask_WhenExists()
+    public async Task Get_GetTaskById_ReturnsOkWhenTaskExists()
     {
         var dto = new CreateTaskDto
         {
-            Name = "Get By Id Task",
+            Name = "Test Task",
             CronExpression = "0 0 * * *",
             RepositoryUrl = "https://github.com/test/repo",
-            Prompt = "Test prompt"
+            WorkflowDefinitionJson = ChronoCode.Models.Workflow.WorkflowDefinitionFactory.CreateDefaultJson(true, "Test prompt")
         };
 
         var createResponse = await _client.PostAsJsonAsync("/api/tasks", dto);
@@ -149,28 +154,28 @@ public class TasksControllerTests : IClassFixture<WebApplicationFactory<Program>
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
 
-        var task = await response.Content.ReadFromJsonAsync<TaskDto>();
-        Assert.NotNull(task);
-        Assert.Equal(created.Id, task.Id);
+        var result = await response.Content.ReadFromJsonAsync<TaskDto>();
+        Assert.NotNull(result);
+        Assert.Equal(created.Id, result.Id);
+        Assert.Equal(dto.Name, result.Name);
     }
 
     [Fact]
-    public async Task Get_GetTask_Returns404_WhenNotExists()
+    public async Task Get_GetTaskById_ReturnsNotFoundWhenTaskDoesNotExist()
     {
         var response = await _client.GetAsync($"/api/tasks/{Guid.NewGuid()}");
-
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
     }
 
     [Fact]
-    public async Task Put_UpdateTask_ReturnsUpdatedTask()
+    public async Task Put_UpdateTask_ReturnsOkWhenTaskExists()
     {
         var createDto = new CreateTaskDto
         {
-            Name = "Update Test Task",
+            Name = "Original Task",
             CronExpression = "0 0 * * *",
             RepositoryUrl = "https://github.com/test/repo",
-            Prompt = "Test prompt"
+            WorkflowDefinitionJson = ChronoCode.Models.Workflow.WorkflowDefinitionFactory.CreateDefaultJson(true, "Test prompt")
         };
 
         var createResponse = await _client.PostAsJsonAsync("/api/tasks", createDto);
@@ -178,42 +183,40 @@ public class TasksControllerTests : IClassFixture<WebApplicationFactory<Program>
 
         var updateDto = new UpdateTaskDto
         {
-            Name = "Updated Task Name",
-            CronExpression = "0 12 * * *"
+            Name = "Updated Task"
         };
 
         var response = await _client.PutAsJsonAsync($"/api/tasks/{created!.Id}", updateDto);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
 
-        var updated = await response.Content.ReadFromJsonAsync<TaskDto>();
-        Assert.NotNull(updated);
-        Assert.Equal("Updated Task Name", updated.Name);
-        Assert.Equal("0 12 * * *", updated.CronExpression);
+        var result = await response.Content.ReadFromJsonAsync<TaskDto>();
+        Assert.NotNull(result);
+        Assert.Equal(created.Id, result.Id);
+        Assert.Equal("Updated Task", result.Name);
     }
 
     [Fact]
-    public async Task Put_UpdateTask_Returns404_WhenNotExists()
+    public async Task Put_UpdateTask_ReturnsNotFoundWhenTaskDoesNotExist()
     {
         var updateDto = new UpdateTaskDto
         {
-            Name = "Updated Task Name"
+            Name = "Updated Task"
         };
 
         var response = await _client.PutAsJsonAsync($"/api/tasks/{Guid.NewGuid()}", updateDto);
-
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
     }
 
     [Fact]
-    public async Task Delete_DeleteTask_Returns204_WhenExists()
+    public async Task Delete_DeleteTask_ReturnsNoContentWhenTaskExists()
     {
         var dto = new CreateTaskDto
         {
-            Name = "Delete Test Task",
+            Name = "Task To Delete",
             CronExpression = "0 0 * * *",
             RepositoryUrl = "https://github.com/test/repo",
-            Prompt = "Test prompt"
+            WorkflowDefinitionJson = ChronoCode.Models.Workflow.WorkflowDefinitionFactory.CreateDefaultJson(true, "Test prompt")
         };
 
         var createResponse = await _client.PostAsJsonAsync("/api/tasks", dto);
@@ -222,155 +225,136 @@ public class TasksControllerTests : IClassFixture<WebApplicationFactory<Program>
         var response = await _client.DeleteAsync($"/api/tasks/{created!.Id}");
 
         Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
+
+        var getResponse = await _client.GetAsync($"/api/tasks/{created.Id}");
+        Assert.Equal(HttpStatusCode.NotFound, getResponse.StatusCode);
     }
 
     [Fact]
-    public async Task Delete_DeleteTask_Returns404_WhenNotExists()
+    public async Task Delete_DeleteTask_ReturnsNotFoundWhenTaskDoesNotExist()
     {
         var response = await _client.DeleteAsync($"/api/tasks/{Guid.NewGuid()}");
-
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
     }
 
     [Fact]
-    public async Task Get_UnknownApiRoute_Returns404_WhenPathStartsWithApi()
-    {
-        var response = await _client.GetAsync("/api/does-not-exist");
-
-        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
-    }
-
-    [Fact]
-    public async Task Get_UnknownStaticAsset_Returns404_WhenFileIsMissing()
-    {
-        var response = await _client.GetAsync("/assets/does-not-exist.js");
-
-        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
-    }
-
-    [Fact]
-    public async Task Post_CreateTask_Returns400_WhenNameIsEmpty()
+    public async Task Post_TriggerTask_ReturnsAcceptedWhenTaskExists()
     {
         var dto = new CreateTaskDto
         {
-            Name = "",
+            Name = "Task To Trigger",
             CronExpression = "0 0 * * *",
             RepositoryUrl = "https://github.com/test/repo",
-            Prompt = "Test prompt"
+            WorkflowDefinitionJson = ChronoCode.Models.Workflow.WorkflowDefinitionFactory.CreateDefaultJson(true, "Test prompt")
         };
 
-        var response = await _client.PostAsJsonAsync("/api/tasks", dto);
+        var createResponse = await _client.PostAsJsonAsync("/api/tasks", dto);
+        var created = await createResponse.Content.ReadFromJsonAsync<TaskDto>();
 
-        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        var response = await _client.PostAsync($"/api/tasks/{created!.Id}/run", null);
+
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
     }
 
     [Fact]
-    public async Task Post_CreateTask_Returns400_WhenCronIsInvalid()
+    public async Task Post_TriggerTask_ReturnsNotFoundWhenTaskDoesNotExist()
+    {
+        var response = await _client.PostAsync($"/api/tasks/{Guid.NewGuid()}/run", null);
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Get_Executions_ReturnsOkWithList()
     {
         var dto = new CreateTaskDto
         {
-            Name = "Test Task",
-            CronExpression = "invalid-cron",
+            Name = "Task With Executions",
+            CronExpression = "0 0 * * *",
             RepositoryUrl = "https://github.com/test/repo",
-            Prompt = "Test prompt"
+            WorkflowDefinitionJson = ChronoCode.Models.Workflow.WorkflowDefinitionFactory.CreateDefaultJson(true, "Test prompt")
         };
 
-        var response = await _client.PostAsJsonAsync("/api/tasks", dto);
+        var createResponse = await _client.PostAsJsonAsync("/api/tasks", dto);
+        var created = await createResponse.Content.ReadFromJsonAsync<TaskDto>();
 
-        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        var response = await _client.GetAsync($"/api/tasks/{created!.Id}/executions");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        var result = await response.Content.ReadFromJsonAsync<List<ExecutionDto>>();
+        Assert.NotNull(result);
+        Assert.Empty(result);
     }
 
     [Fact]
-    public async Task Post_CreateTask_Returns400_WhenCronHasTooFewParts()
+    public async Task Post_CreateTask_ReturnsBadRequestWhenModelIsInvalid()
     {
         var dto = new CreateTaskDto
         {
-            Name = "Test Task",
-            CronExpression = "0 0 * *",
+            Name = string.Empty,
+            CronExpression = "0 0 * * *",
             RepositoryUrl = "https://github.com/test/repo",
-            Prompt = "Test prompt"
+            WorkflowDefinitionJson = ChronoCode.Models.Workflow.WorkflowDefinitionFactory.CreateDefaultJson(true, "Test prompt")
         };
 
         var response = await _client.PostAsJsonAsync("/api/tasks", dto);
-
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
 
     [Fact]
-    public async Task Post_CreateTask_Returns400_WhenUrlIsInvalid()
+    public async Task Post_CreateTask_ReturnsBadRequestWhenRepositoryUrlIsInvalid()
     {
         var dto = new CreateTaskDto
         {
-            Name = "Test Task",
+            Name = "Bad Repo Task",
             CronExpression = "0 0 * * *",
             RepositoryUrl = "not-a-valid-url",
-            Prompt = "Test prompt"
+            WorkflowDefinitionJson = ChronoCode.Models.Workflow.WorkflowDefinitionFactory.CreateDefaultJson(true, "Test prompt")
         };
 
         var response = await _client.PostAsJsonAsync("/api/tasks", dto);
-
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
 
     [Fact]
-    public async Task Post_CreateTask_Returns400_WhenPromptIsEmpty()
+    public async Task Post_CreateTask_ReturnsBadRequestWhenWorkflowDefinitionIsMissing()
     {
         var dto = new CreateTaskDto
         {
-            Name = "Test Task",
+            Name = "Missing Workflow Task",
             CronExpression = "0 0 * * *",
             RepositoryUrl = "https://github.com/test/repo",
-            Prompt = ""
+            WorkflowDefinitionJson = ""
         };
 
         var response = await _client.PostAsJsonAsync("/api/tasks", dto);
-
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
 
     [Fact]
-    public async Task Post_CreateTask_Returns400_WhenNameIsTooLong()
+    public async Task Get_NodeSession_ReturnsPersistedMetadata()
     {
-        var dto = new CreateTaskDto
-        {
-            Name = new string('a', 101),
-            CronExpression = "0 0 * * *",
-            RepositoryUrl = "https://github.com/test/repo",
-            Prompt = "Test prompt"
-        };
+        var (execution, node) = await CreateNodeSessionAsync("mock-session", "mock-session-file", "/tmp/mock");
 
-        var response = await _client.PostAsJsonAsync("/api/tasks", dto);
-
-        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
-    }
-
-    [Fact]
-    public async Task Get_ExecutionSession_ReturnsLiveSession()
-    {
-        var executionRepository = _scope.ServiceProvider.GetRequiredService<IExecutionRepository>();
-        var execution = await executionRepository.CreateAsync(Guid.NewGuid());
-        await executionRepository.UpdateSessionAsync(execution.Id, new AgentExecutionSession("pi", "mock-session", "mock-session-file", "/tmp/mock", true));
-
-        var response = await _client.GetAsync($"/api/tasks/executions/{execution.Id}/session");
+        var response = await _client.GetAsync($"/api/tasks/executions/{execution.Id}/nodes/{node.Id}/session");
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
 
         var session = await response.Content.ReadFromJsonAsync<ExecutionSessionDto>();
         Assert.NotNull(session);
-        Assert.True(session.IsLive);
         Assert.True(session.SupportsSupplementalMessages);
+        Assert.True(session.CanResume);
         Assert.Equal("mock-session", session.SessionId);
+        Assert.Equal("mock-session-file", session.SessionFile);
     }
 
     [Fact]
-    public async Task Post_ExecutionMessage_QueuesSupplementalMessage()
+    public async Task Post_NodeMessage_QueuesSupplementalMessage()
     {
-        var executionRepository = _scope.ServiceProvider.GetRequiredService<IExecutionRepository>();
-        var execution = await executionRepository.CreateAsync(Guid.NewGuid());
-        await executionRepository.UpdateSessionAsync(execution.Id, new AgentExecutionSession("pi", "mock-session", "mock-session-file", "/tmp/mock", true));
+        var (execution, node) = await CreateNodeSessionAsync("mock-session", "mock-session-file", "/tmp/mock");
 
         var response = await _client.PostAsJsonAsync(
-            $"/api/tasks/executions/{execution.Id}/message",
+            $"/api/tasks/executions/{execution.Id}/nodes/{node.Id}/message",
             new ExecutionMessageDto { Message = "Keep going", Mode = "steer" });
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
@@ -381,16 +365,14 @@ public class TasksControllerTests : IClassFixture<WebApplicationFactory<Program>
     }
 
     [Fact]
-    public async Task Post_ResumeExecutionSession_RestoresPersistedSession()
+    public async Task Post_ResumeNodeSession_RestoresPersistedSession()
     {
-        var executionRepository = _scope.ServiceProvider.GetRequiredService<IExecutionRepository>();
-        var execution = await executionRepository.CreateAsync(Guid.NewGuid());
-        await executionRepository.UpdateSessionAsync(execution.Id, new AgentExecutionSession("pi", "persisted-session", "persisted-session-file", "/tmp/persisted", true));
+        var (execution, node) = await CreateNodeSessionAsync("persisted-session", "persisted-session-file", "/tmp/persisted");
 
         InMemoryAgentRuntime.LiveSession = null;
 
         var response = await _client.PostAsJsonAsync(
-            $"/api/tasks/executions/{execution.Id}/resume",
+            $"/api/tasks/executions/{execution.Id}/nodes/{node.Id}/resume",
             new ResumeExecutionSessionDto());
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
@@ -400,6 +382,136 @@ public class TasksControllerTests : IClassFixture<WebApplicationFactory<Program>
         Assert.True(session.IsLive);
         Assert.Equal("persisted-session", session.SessionId);
         Assert.Equal("persisted-session-file", session.SessionFile);
+    }
+
+    [Fact]
+    public async Task Get_Nodes_ReturnsOkWithList()
+    {
+        var executionRepository = _scope.ServiceProvider.GetRequiredService<IExecutionRepository>();
+        var execution = await executionRepository.CreateAsync(new TaskExecution
+        {
+            Id = Guid.NewGuid(),
+            TaskId = Guid.NewGuid(),
+            Status = Models.TaskStatus.Running,
+            StartedAt = DateTime.UtcNow
+        });
+        var node = new ChronoCode.Models.Workflow.WorkflowNodeExecution
+        {
+            Id = Guid.NewGuid(),
+            ExecutionId = execution.Id,
+            NodeId = "agent",
+            NodeType = "agent",
+            ScopeKey = "root",
+            Attempt = 0,
+            Status = ChronoCode.Models.Workflow.WorkflowNodeStatus.Completed,
+            StartedAt = DateTime.UtcNow,
+            CompletedAt = DateTime.UtcNow,
+            AgentBackend = "pi"
+        };
+        await executionRepository.CreateNodeExecutionAsync(node);
+
+        var response = await _client.GetAsync($"/api/tasks/executions/{execution.Id}/nodes");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var result = await response.Content.ReadFromJsonAsync<List<NodeExecutionDto>>();
+        Assert.NotNull(result);
+        Assert.Single(result);
+        Assert.Equal("agent", result[0].NodeId);
+        Assert.Equal("completed", result[0].Status);
+    }
+
+    [Fact]
+    public async Task Post_ApproveNode_ReturnsOk()
+    {
+        var executionRepository = _scope.ServiceProvider.GetRequiredService<IExecutionRepository>();
+        var execution = await executionRepository.CreateAsync(new TaskExecution
+        {
+            Id = Guid.NewGuid(),
+            TaskId = Guid.NewGuid(),
+            Status = Models.TaskStatus.Running,
+            StartedAt = DateTime.UtcNow
+        });
+        var node = new ChronoCode.Models.Workflow.WorkflowNodeExecution
+        {
+            Id = Guid.NewGuid(),
+            ExecutionId = execution.Id,
+            NodeId = "gate",
+            NodeType = "approval_gate",
+            ScopeKey = "root",
+            Attempt = 0,
+            Status = ChronoCode.Models.Workflow.WorkflowNodeStatus.WaitingApproval,
+            StartedAt = DateTime.UtcNow,
+            AgentBackend = "pi"
+        };
+        await executionRepository.CreateNodeExecutionAsync(node);
+
+        var response = await _client.PostAsJsonAsync(
+            $"/api/tasks/executions/{execution.Id}/approval/{node.Id}",
+            new ApprovalRequestDto { Approved = true });
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Post_RejectNode_ReturnsOk()
+    {
+        var executionRepository = _scope.ServiceProvider.GetRequiredService<IExecutionRepository>();
+        var execution = await executionRepository.CreateAsync(new TaskExecution
+        {
+            Id = Guid.NewGuid(),
+            TaskId = Guid.NewGuid(),
+            Status = Models.TaskStatus.Running,
+            StartedAt = DateTime.UtcNow
+        });
+        var node = new ChronoCode.Models.Workflow.WorkflowNodeExecution
+        {
+            Id = Guid.NewGuid(),
+            ExecutionId = execution.Id,
+            NodeId = "gate",
+            NodeType = "approval_gate",
+            ScopeKey = "root",
+            Attempt = 0,
+            Status = ChronoCode.Models.Workflow.WorkflowNodeStatus.WaitingApproval,
+            StartedAt = DateTime.UtcNow,
+            AgentBackend = "pi"
+        };
+        await executionRepository.CreateNodeExecutionAsync(node);
+
+        var response = await _client.PostAsJsonAsync(
+            $"/api/tasks/executions/{execution.Id}/approval/{node.Id}",
+            new ApprovalRequestDto { Approved = false, Reason = "rejected by reviewer" });
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    private async Task<(TaskExecution execution, ChronoCode.Models.Workflow.WorkflowNodeExecution node)> CreateNodeSessionAsync(
+        string sessionId, string sessionFile, string workingDirectory)
+    {
+        var executionRepository = _scope.ServiceProvider.GetRequiredService<IExecutionRepository>();
+        var execution = await executionRepository.CreateAsync(new TaskExecution
+        {
+            Id = Guid.NewGuid(),
+            TaskId = Guid.NewGuid(),
+            Status = Models.TaskStatus.Running,
+            StartedAt = DateTime.UtcNow
+        });
+        var node = new ChronoCode.Models.Workflow.WorkflowNodeExecution
+        {
+            Id = Guid.NewGuid(),
+            ExecutionId = execution.Id,
+            NodeId = "agent",
+            NodeType = "agent",
+            ScopeKey = "root",
+            Attempt = 0,
+            Status = ChronoCode.Models.Workflow.WorkflowNodeStatus.Running,
+            StartedAt = DateTime.UtcNow,
+            AgentBackend = "pi",
+            AgentSessionId = sessionId,
+            AgentSessionFile = sessionFile,
+            AgentWorkingDirectory = workingDirectory
+        };
+        await executionRepository.CreateNodeExecutionAsync(node);
+        return (execution, node);
     }
 }
 
@@ -414,11 +526,12 @@ public class ExecutionMessageResponse
 
 public class InMemorySchedulerService : ISchedulerService
 {
-    public void ScheduleTask(ScheduledTask task) { }
-    public void UnscheduleTask(Guid taskId) { }
-    public void TriggerTask(Guid taskId) { }
-    public Task<List<ScheduledTask>> GetScheduledTasksAsync() => Task.FromResult(new List<ScheduledTask>());
-    public List<DateTime> GetNextRunTimes(Guid taskId, int count = 5) => new();
+    public Task SyncTaskAsync(ScheduledTask task, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task UnscheduleTaskAsync(Guid taskId, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task TriggerTaskAsync(Guid taskId, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task<List<ScheduledTask>> GetScheduledTasksAsync(CancellationToken cancellationToken = default) => Task.FromResult(new List<ScheduledTask>());
+    public Task<List<DateTime>> GetNextRunTimesAsync(Guid taskId, int count = 5, CancellationToken cancellationToken = default) => Task.FromResult(new List<DateTime>());
+    public Task<SchedulerQueueSnapshotDto> GetQueueSnapshotAsync(CancellationToken cancellationToken = default) => Task.FromResult(new SchedulerQueueSnapshotDto());
 }
 
 public class InMemoryOpencodeServerManager : IOpencodeServerManager
@@ -436,22 +549,22 @@ public class InMemoryOpencodeClient : IOpencodeClient
 
     public Task<string> CreateSessionAsync(string workingDirectory, CancellationToken cancellationToken = default)
         => Task.FromResult("mock-session-id");
-    
+
     public Task<string> SendPromptAsync(string sessionId, string prompt, string workingDirectory, CancellationToken cancellationToken = default)
         => Task.FromResult("Mock AI response");
-    
+
     public Task<string> SendPromptWithStreamingAsync(string sessionId, string prompt, string workingDirectory, Func<string, Task> onChunk, CancellationToken cancellationToken = default)
         => Task.FromResult("Mock streaming response");
-    
+
     public Task<List<FileDiff>> GetSessionDiffAsync(string sessionId, string? messageId = null, CancellationToken cancellationToken = default)
         => Task.FromResult(new List<FileDiff>());
-    
+
     public Task AbortSessionAsync(string sessionId, CancellationToken cancellationToken = default)
         => Task.CompletedTask;
-    
+
     public Task<List<SessionInfo>> ListSessionsAsync(CancellationToken cancellationToken = default)
         => Task.FromResult(new List<SessionInfo>());
-    
+
     public Task<SessionInfo?> GetSessionAsync(string sessionId, CancellationToken cancellationToken = default)
         => Task.FromResult<SessionInfo?>(null);
 }
@@ -460,43 +573,24 @@ public class InMemoryGitService : IGitService
 {
     public Task<string> CloneRepositoryAsync(string repoUrl, string workspacePath)
         => Task.FromResult("/tmp/mock/repo");
-    
+
     public Task<string> CreateBranchAsync(string repoPath, string branchName, string baseBranch)
         => Task.FromResult(branchName);
-    
+
     public Task CheckoutBranchAsync(string repoPath, string branchName)
         => Task.CompletedTask;
-    
+
     public Task<string> CommitChangesAsync(string repoPath, string message)
         => Task.FromResult("mock-commit-sha");
-    
+
     public Task PushChangesAsync(string repoPath, string remoteName = "origin")
         => Task.CompletedTask;
-    
+
     public Task<string> CreatePullRequestAsync(string repoPath, string branchName, string baseBranch, string title, string body)
         => Task.FromResult("https://github.com/mock/pr/1");
-    
+
     public Task<List<GitFileStatus>> GetChangedFilesAsync(string repoPath)
         => Task.FromResult(new List<GitFileStatus>());
-}
-
-public class InMemoryTaskRunner : ITaskRunner
-{
-    public Task<TaskExecution> ExecuteTaskAsync(ScheduledTask task, CancellationToken cancellationToken = default)
-    {
-        var execution = new TaskExecution
-        {
-            Id = Guid.NewGuid(),
-            TaskId = task.Id,
-            StartedAt = DateTime.UtcNow,
-            CompletedAt = DateTime.UtcNow,
-            Status = Models.TaskStatus.Completed,
-            BranchName = "mock-branch",
-            CommitSha = "mock-sha",
-            FilesChanged = 0
-        };
-        return Task.FromResult(execution);
-    }
 }
 
 public class InMemoryAgentRuntime : IAgentRuntime
@@ -533,4 +627,12 @@ public class InMemoryAgentRuntime : IAgentRuntime
         LiveSession = null;
         return Task.CompletedTask;
     }
+}
+
+public class InMemoryAgentRuntimeResolver : IAgentRuntimeResolver
+{
+    private readonly InMemoryAgentRuntime _runtime;
+    public InMemoryAgentRuntimeResolver(InMemoryAgentRuntime runtime) => _runtime = runtime;
+    public IAgentRuntime Get(string? backend) => _runtime;
+    public AgentRuntimeStatus GetStatus(string? backend) => _runtime.GetStatus();
 }

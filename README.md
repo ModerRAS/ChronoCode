@@ -31,8 +31,8 @@ AI驱动的定时任务调度框架 - 通过自然语言对话或传统表单方
                                │
                                ↓
                     ┌─────────────────────┐
-                    │  Hangfire 调度       │
-                    │  (定时触发任务)      │
+                    │  应用内调度器        │
+                    │  (定时触发工作流)   │
                     └─────────────────────┘
 ```
 
@@ -42,8 +42,8 @@ AI驱动的定时任务调度框架 - 通过自然语言对话或传统表单方
 用户配置的定时任务，包含：
 - **Cron表达式**: 任务执行时间（如 `0 2 * * *` 表示每天凌晨2点）
 - **Repository**: Git仓库地址
-- **Prompt**: 给AI的指令
-- **约束条件**: 最大运行时间、最大文件变更数等
+- **Workflow Definition**: 节点图 DSL（start/prepare_workspace/agent/parallel/condition/for_each/while/approval_gate/commit_changes/create_pull_request/end）
+- **约束条件**: 最大运行时间、最大文件变更数、最大并发运行数等
 
 ### Execution (执行记录)
 每次任务执行的记录，包含：
@@ -115,14 +115,13 @@ npm run dev
 
 ### 5. 访问
 - 应用首页: http://localhost:5242
-- Hangfire Dashboard: http://localhost:5242/hangfire
 - 前端开发服务器: http://localhost:5173
 
 ## 技术栈
 
 ### 后端
 - .NET 10.0 ASP.NET Core
-- Hangfire (任务调度)
+- 应用内调度器 (AppSchedulerService + SchedulerBackgroundService)
 - Entity Framework Core + PostgreSQL
 - LibGit2Sharp (Git操作)
 
@@ -134,6 +133,8 @@ npm run dev
 
 ## API端点
 
+> 会话相关 API 是 node-scoped：一个 workflow run 会有多个 agent 节点 session，因此按 `nodeExecutionId` 寻址，而不是直接按 `executionId`。
+
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | GET | /api/tasks | 列出所有任务 |
@@ -143,13 +144,19 @@ npm run dev
 | DELETE | /api/tasks/{id} | 删除任务 |
 | POST | /api/tasks/{id}/run | 手动触发任务 |
 | GET | /api/tasks/{id}/executions | 获取执行历史 |
-| POST | /api/tasks/ai | AI创建任务接口 |
-| GET | /api/tasks/executions/{id}/session | 获取执行绑定的 agent 会话 |
-| POST | /api/tasks/executions/{id}/resume | 按 executionId 恢复/重连持久化的 pi 会话 |
-| POST | /api/tasks/executions/{id}/message | 向运行中的 agent 追加 prompt / steer / follow_up |
+| GET | /api/tasks/executions/{executionId}/logs | 获取执行日志 |
+| GET | /api/tasks/executions/{executionId}/nodes | 列出某次 run 的节点执行 |
+| GET | /api/tasks/executions/{executionId}/nodes/{nodeExecutionId}/session | 获取节点绑定的 agent 会话 |
+| POST | /api/tasks/executions/{executionId}/nodes/{nodeExecutionId}/resume | 恢复/重连节点的持久化 pi 会话 |
+| POST | /api/tasks/executions/{executionId}/nodes/{nodeExecutionId}/message | 向运行中的 agent 节点追加 prompt / steer / follow_up |
+| POST | /api/tasks/executions/{executionId}/approval/{nodeExecutionId} | 放行 approval_gate 节点 |
+| POST | /api/ai/message | AI 聊天（自然语言 → 结构化响应） |
+| POST | /api/ai/ai | 执行 AI 返回的结构化动作（create/update/delete/trigger） |
 | GET | /api/tasks/server/status | 当前执行后端状态 |
 | POST | /api/tasks/server/start | 启动当前执行后端 |
 | POST | /api/tasks/server/stop | 停止当前执行后端 |
+
+> 注意：执行历史返回的 `ExecutionDto` 仅包含 run 级状态，不再暴露 run 级 agent session 元数据；agent session 现在只通过 node-scoped API 访问。
 
 详见 [API文档](docs/api.md)
 

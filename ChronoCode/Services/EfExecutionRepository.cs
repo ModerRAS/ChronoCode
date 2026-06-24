@@ -1,6 +1,7 @@
 using System.Text.Json;
 using ChronoCode.Data;
 using ChronoCode.Models;
+using ChronoCode.Models.Workflow;
 using Microsoft.EntityFrameworkCore;
 
 namespace ChronoCode.Services;
@@ -16,20 +17,12 @@ public class EfExecutionRepository : IExecutionRepository
         _logger = logger;
     }
 
-    public async Task<TaskExecution> CreateAsync(Guid taskId)
+    public async Task<TaskExecution> CreateAsync(TaskExecution execution)
     {
-        var execution = new TaskExecution
-        {
-            Id = Guid.NewGuid(),
-            TaskId = taskId,
-            StartedAt = DateTime.UtcNow,
-            Status = Models.TaskStatus.Running,
-            Logs = new List<string>()
-        };
-
+        execution.Logs ??= new List<string>();
         _context.TaskExecutions.Add(execution);
         await _context.SaveChangesAsync();
-        _logger.LogInformation("Created execution {ExecutionId} for task {TaskId}", execution.Id, taskId);
+        _logger.LogInformation("Created execution {ExecutionId} for task {TaskId}", execution.Id, execution.TaskId);
         return execution;
     }
 
@@ -38,7 +31,7 @@ public class EfExecutionRepository : IExecutionRepository
         return await _context.TaskExecutions.FindAsync(id);
     }
 
-    public async Task<List<TaskExecution>> GetByTaskIdAsync(Guid taskId, int limit = 10)
+    public async Task<List<TaskExecution>> GetByTaskIdAsync(Guid taskId, int limit = 20)
     {
         return await _context.TaskExecutions
             .Where(e => e.TaskId == taskId)
@@ -53,7 +46,7 @@ public class EfExecutionRepository : IExecutionRepository
         await _context.SaveChangesAsync();
     }
 
-    public async Task UpdateSessionAsync(Guid executionId, AgentExecutionSession session)
+    public async Task AddLogAsync(Guid executionId, string level, string message, string? details = null)
     {
         var execution = await _context.TaskExecutions.FindAsync(executionId);
         if (execution == null)
@@ -61,38 +54,111 @@ public class EfExecutionRepository : IExecutionRepository
             return;
         }
 
-        execution.AgentBackend = session.Backend;
-        execution.AgentSessionId = session.SessionId;
-        execution.AgentSessionFile = session.SessionFile;
-        execution.AgentWorkingDirectory = session.WorkingDirectory;
-        await _context.SaveChangesAsync();
-    }
-
-    public async Task AddLogAsync(Guid executionId, string level, string message, string? details = null)
-    {
-        var execution = await _context.TaskExecutions.FindAsync(executionId);
-        if (execution != null)
+        var logEntry = new TaskLogEntry
         {
-            var logEntry = new TaskLogEntry
-            {
-                Timestamp = DateTime.UtcNow,
-                Level = level,
-                Message = message,
-                Details = details
-            };
-            execution.Logs.Add(JsonSerializer.Serialize(logEntry));
-            await _context.SaveChangesAsync();
-        }
+            Timestamp = DateTime.UtcNow,
+            Level = level,
+            Message = message,
+            Details = details
+        };
+
+        execution.Logs ??= new List<string>();
+        execution.Logs.Add(JsonSerializer.Serialize(logEntry));
+        await _context.SaveChangesAsync();
     }
 
     public async Task<List<TaskLogEntry>> GetLogsAsync(Guid executionId)
     {
         var execution = await _context.TaskExecutions.FindAsync(executionId);
         if (execution == null)
+        {
             return new List<TaskLogEntry>();
+        }
 
         return execution.Logs
             .Select(log => JsonSerializer.Deserialize<TaskLogEntry>(log) ?? new TaskLogEntry { Message = log })
             .ToList();
+    }
+
+    public async Task<List<TaskExecution>> GetActiveRunsAsync()
+    {
+        return await _context.TaskExecutions
+            .Where(e => e.Status == Models.TaskStatus.Running)
+            .ToListAsync();
+    }
+
+    public async Task<int> CountActiveRunsAsync(Guid taskId)
+    {
+        return await _context.TaskExecutions
+            .CountAsync(e => e.TaskId == taskId && e.Status == Models.TaskStatus.Running);
+    }
+
+    public async Task<WorkflowNodeExecution> CreateNodeExecutionAsync(WorkflowNodeExecution node)
+    {
+        _context.WorkflowNodeExecutions.Add(node);
+        await _context.SaveChangesAsync();
+        return node;
+    }
+
+    public async Task<WorkflowNodeExecution?> GetNodeExecutionAsync(Guid id)
+    {
+        return await _context.WorkflowNodeExecutions.FindAsync(id);
+    }
+
+    public async Task<List<WorkflowNodeExecution>> GetNodeExecutionsAsync(Guid executionId)
+    {
+        return await _context.WorkflowNodeExecutions
+            .Where(n => n.ExecutionId == executionId)
+            .OrderBy(n => n.StartedAt)
+            .ToListAsync();
+    }
+
+    public async Task<List<WorkflowNodeExecution>> GetRunningNodeExecutionsAsync()
+    {
+        return await _context.WorkflowNodeExecutions
+            .Where(n => n.Status == WorkflowNodeStatus.Running)
+            .ToListAsync();
+    }
+
+    public async Task<List<WorkflowNodeExecution>> GetRetryableNodeExecutionsAsync(DateTime now)
+    {
+        return await _context.WorkflowNodeExecutions
+            .Where(n => n.Status == WorkflowNodeStatus.Retrying && n.NextRetryAt != null && n.NextRetryAt <= now)
+            .ToListAsync();
+    }
+
+    public async Task UpdateNodeExecutionAsync(WorkflowNodeExecution node)
+    {
+        _context.WorkflowNodeExecutions.Update(node);
+        await _context.SaveChangesAsync();
+    }
+
+    public async Task<WorkflowNodeExecution?> GetActiveNodeExecutionAsync(Guid executionId, string nodeId, string scopeKey)
+    {
+        var activeStatuses = new[]
+        {
+            WorkflowNodeStatus.Pending,
+            WorkflowNodeStatus.Running,
+            WorkflowNodeStatus.Retrying,
+            WorkflowNodeStatus.WaitingApproval,
+            WorkflowNodeStatus.Completed
+        };
+
+        return await _context.WorkflowNodeExecutions
+            .Where(n => n.ExecutionId == executionId
+                        && n.NodeId == nodeId
+                        && n.ScopeKey == scopeKey
+                        && activeStatuses.Contains(n.Status))
+            .OrderByDescending(n => n.StartedAt)
+            .FirstOrDefaultAsync();
+    }
+
+    public async Task<WorkflowNodeExecution?> GetWaitingApprovalNodeAsync(Guid executionId, Guid nodeExecutionId)
+    {
+        return await _context.WorkflowNodeExecutions
+            .Where(n => n.Id == nodeExecutionId
+                        && n.ExecutionId == executionId
+                        && n.Status == WorkflowNodeStatus.WaitingApproval)
+            .FirstOrDefaultAsync();
     }
 }

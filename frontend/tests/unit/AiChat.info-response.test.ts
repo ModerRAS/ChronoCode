@@ -83,3 +83,43 @@ describe('AiChat info responses', () => {
     expect(wrapper.text()).toContain('Here is some help')
   })
 })
+
+describe('AiChat actionable responses', () => {
+  it('renders action buttons for create_task and triggers confirm flow', async () => {
+    messages.value = []
+    error.value = null
+
+    const actionableResponse = JSON.stringify({
+      action: 'create_task',
+      task_id: null,
+      task: {
+        name: 'Daily Build',
+        cron: '0 9 * * *',
+        repository: 'https://github.com/test/repo',
+        workflow_definition_json: JSON.stringify({ version: 1, startNodeId: 'start', nodes: [] }),
+        runtime_backend: 'pi',
+        max_concurrent_runs: 1,
+        node_failure_policy_json: '{}',
+      },
+      error: null,
+    })
+
+    sendMessage.mockImplementationOnce(async (content: string) => {
+      messages.value.push({ id: 'user-1', role: 'user', content, timestamp: new Date() })
+      messages.value.push({ id: 'ai-1', role: 'ai', content: actionableResponse, timestamp: new Date() })
+      return null
+    })
+
+    const wrapper = mountChat()
+
+    // Type a message so handleSend doesn't short-circuit on empty input
+    await wrapper.find('.search-input').setValue('Create a daily build task')
+    await wrapper.find('.search-button').trigger('click')
+    await flushPromises()
+
+    // Action buttons should be visible for actionable responses
+    expect(wrapper.find('.action-buttons').exists()).toBe(true)
+    expect(wrapper.text()).toContain('create_task')
+    expect(wrapper.text()).toContain('Daily Build')
+  })
+})

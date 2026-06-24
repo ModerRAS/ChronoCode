@@ -1,7 +1,7 @@
+using System.Diagnostics;
+using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
-using System.Net.Http.Headers;
-using LibGit2Sharp;
 
 namespace ChronoCode.Services;
 
@@ -18,9 +18,16 @@ public interface IGitService
 
 public class GitService : IGitService
 {
+    private static readonly TimeSpan CloneTimeout = TimeSpan.FromMinutes(5);
+    private static readonly TimeSpan PushTimeout = TimeSpan.FromMinutes(5);
+    private static readonly TimeSpan CommitTimeout = TimeSpan.FromMinutes(1);
+    private static readonly TimeSpan ShortCommandTimeout = TimeSpan.FromSeconds(30);
+
     private readonly ILogger<GitService> _logger;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly string? _githubToken;
+
+    private sealed record GitCommandResult(int ExitCode, string StdOut, string StdErr);
 
     public GitService(ILogger<GitService> logger, IHttpClientFactory httpClientFactory, IConfiguration configuration)
     {
@@ -33,115 +40,91 @@ public class GitService : IGitService
     {
         _logger.LogInformation("Cloning repository {RepoUrl} to {Path}", repoUrl, workspacePath);
 
-        return await Task.Run(() =>
+        if (Directory.Exists(workspacePath))
         {
-            if (Directory.Exists(workspacePath))
-            {
-                Directory.Delete(workspacePath, true);
-            }
+            Directory.Delete(workspacePath, true);
+        }
 
-            var repoPath = Repository.Clone(repoUrl, workspacePath);
-            _logger.LogInformation("Repository cloned to {Path}", repoPath);
-            return repoPath;
-        });
+        await RunGitAsync(null, CloneTimeout, ["clone", repoUrl, workspacePath]);
+        _logger.LogInformation("Repository cloned to {Path}", workspacePath);
+        return workspacePath;
     }
 
     public async Task<string> CreateBranchAsync(string repoPath, string branchName, string baseBranch)
     {
         _logger.LogInformation("Creating branch {Branch} from {Base} in {Path}", branchName, baseBranch, repoPath);
 
-        return await Task.Run(() =>
+        try
         {
-            using var repo = new Repository(repoPath);
+            await RunGitAsync(repoPath, ShortCommandTimeout, ["rev-parse", "--verify", $"origin/{baseBranch}"]);
+        }
+        catch (InvalidOperationException ex) when (ex.Message.StartsWith("git rev-parse failed with exit code ", StringComparison.Ordinal))
+        {
+            throw new Exception($"Base branch {baseBranch} not found");
+        }
 
-            var baseCommit = repo.Branches[baseBranch]?.Tip;
-            if (baseCommit == null)
-                throw new Exception($"Base branch {baseBranch} not found");
-
-            repo.CreateBranch(branchName, baseCommit);
-            var branch = repo.Branches[branchName];
-            if (branch != null)
-            {
-                repo.Branches.Update(branch, b => b.TrackedBranch = baseBranch);
-            }
-
-            _logger.LogInformation("Created branch {Branch}", branchName);
-            return branchName;
-        });
+        await RunGitAsync(repoPath, ShortCommandTimeout, ["branch", branchName, $"origin/{baseBranch}"]);
+        _logger.LogInformation("Created branch {Branch}", branchName);
+        return branchName;
     }
 
     public async Task CheckoutBranchAsync(string repoPath, string branchName)
     {
         _logger.LogInformation("Checking out branch {Branch} in {Path}", branchName, repoPath);
 
-        await Task.Run(() =>
-        {
-            using var repo = new Repository(repoPath);
-            var branch = repo.Branches[branchName];
-
-            if (branch == null)
-                throw new Exception($"Branch {branchName} not found");
-
-            Commands.Checkout(repo, branch);
-            _logger.LogInformation("Checked out branch {Branch}", branchName);
-        });
+        await RunGitAsync(repoPath, ShortCommandTimeout, ["checkout", branchName]);
+        _logger.LogInformation("Checked out branch {Branch}", branchName);
     }
 
     public async Task<string> CommitChangesAsync(string repoPath, string message)
     {
         _logger.LogInformation("Committing changes in {Path}", repoPath);
 
-        return await Task.Run(() =>
+        await RunGitAsync(repoPath, ShortCommandTimeout, ["add", "-A"]);
+
+        var status = await RunGitAsync(repoPath, ShortCommandTimeout, ["status", "--porcelain"]);
+        if (string.IsNullOrWhiteSpace(status.StdOut))
         {
-            using var repo = new Repository(repoPath);
+            _logger.LogWarning("No changes to commit");
+            return string.Empty;
+        }
 
-            Commands.Stage(repo, "*");
+        await RunGitAsync(
+            repoPath,
+            CommitTimeout,
+            ["-c", "user.name=ChronoCode Bot", "-c", "user.email=bot@chronocode.local", "commit", "-m", message]);
 
-            if (!repo.RetrieveStatus().IsDirty)
-            {
-                _logger.LogWarning("No changes to commit");
-                return string.Empty;
-            }
-
-            var signature = new Signature("ChronoCode Bot", "bot@chronocode.local", DateTimeOffset.Now);
-            var commit = repo.Commit(message, signature, signature);
-
-            _logger.LogInformation("Committed changes: {CommitSha}", commit.Sha);
-            return commit.Sha;
-        });
+        var head = await RunGitAsync(repoPath, ShortCommandTimeout, ["rev-parse", "HEAD"]);
+        var commitSha = head.StdOut.Trim();
+        _logger.LogInformation("Committed changes: {CommitSha}", commitSha);
+        return commitSha;
     }
 
     public async Task PushChangesAsync(string repoPath, string remoteName = "origin")
     {
         _logger.LogInformation("Pushing changes to {Remote} from {Path}", remoteName, repoPath);
 
-        await Task.Run(() =>
+        var branchResult = await RunGitAsync(repoPath, ShortCommandTimeout, ["rev-parse", "--abbrev-ref", "HEAD"]);
+        var branchName = branchResult.StdOut.Trim();
+        var remoteUrlResult = await RunGitAsync(repoPath, ShortCommandTimeout, ["remote", "get-url", remoteName]);
+        var remoteUrl = remoteUrlResult.StdOut.Trim();
+
+        Dictionary<string, string?>? environment = null;
+        if (!string.IsNullOrWhiteSpace(_githubToken)
+            && (remoteUrl.StartsWith("http://", StringComparison.OrdinalIgnoreCase)
+                || remoteUrl.StartsWith("https://", StringComparison.OrdinalIgnoreCase)))
         {
-            using var repo = new Repository(repoPath);
-
-            var remote = repo.Network.Remotes[remoteName];
-            if (remote == null)
-                throw new Exception($"Remote {remoteName} not found");
-
-            var branch = repo.Head;
-            var refSpec = $"refs/heads/{branch.FriendlyName}:refs/heads/{branch.FriendlyName}";
-
-            var pushOptions = new PushOptions();
-            
-            if (!string.IsNullOrEmpty(_githubToken))
+            var tokenBytes = Encoding.UTF8.GetBytes($"x-access-token:{_githubToken}");
+            environment = new Dictionary<string, string?>
             {
-                var credentials = new UsernamePasswordCredentials
-                {
-                    Username = "x-access-token",
-                    Password = _githubToken
-                };
-                
-                pushOptions.CredentialsProvider = (_, _, _) => credentials;
-            }
+                ["GIT_CONFIG_COUNT"] = "1",
+                ["GIT_CONFIG_KEY_0"] = "http.extraheader",
+                ["GIT_CONFIG_VALUE_0"] = $"AUTHORIZATION: basic {Convert.ToBase64String(tokenBytes)}"
+            };
+        }
 
-            repo.Network.Push(remote, refSpec, pushOptions);
-            _logger.LogInformation("Changes pushed successfully");
-        });
+        await RunGitAsync(repoPath, PushTimeout, ["push", remoteName, $"HEAD:refs/heads/{branchName}"], environment);
+        _logger.LogInformation("Changes pushed successfully");
     }
 
     public async Task<string> CreatePullRequestAsync(string repoPath, string branchName, string baseBranch, string title, string body)
@@ -153,7 +136,7 @@ public class GitService : IGitService
             throw new InvalidOperationException("GitHub:Token is required to create pull requests.");
         }
 
-        var (owner, repo) = ExtractOwnerAndRepoParts(repoPath);
+        var (owner, repo) = await ExtractOwnerAndRepoPartsAsync(repoPath);
         var apiUrl = $"https://api.github.com/repos/{owner}/{repo}/pulls";
 
         var payload = new
@@ -190,61 +173,147 @@ public class GitService : IGitService
     {
         _logger.LogInformation("Getting changed files in {Path}", repoPath);
 
-        return await Task.Run(() =>
-        {
-            using var repo = new Repository(repoPath);
-            var status = repo.RetrieveStatus(new StatusOptions());
-
-            return status
-                .Where(s => s.State != FileStatus.Ignored)
-                .Select(s => new GitFileStatus
-                {
-                    Path = s.FilePath,
-                    Status = s.State.ToString()
-                })
-                .ToList();
-        });
+        var result = await RunGitAsync(repoPath, ShortCommandTimeout, ["status", "--porcelain"]);
+        return result.StdOut
+            .Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
+            .Where(line => line.Length >= 4)
+            .Select(line => new GitFileStatus
+            {
+                Status = line.Substring(0, 2),
+                Path = line.Substring(3)
+            })
+            .ToList();
     }
 
-    private (string owner, string repo) ExtractOwnerAndRepoParts(string repoPath)
+    private async Task<(string owner, string repo)> ExtractOwnerAndRepoPartsAsync(string repoPath)
     {
-        using var repo = new Repository(repoPath);
-        var remote = repo.Network.Remotes["origin"];
-        if (remote == null)
-        {
-            throw new InvalidOperationException("Git remote 'origin' is not configured.");
-        }
-
-        var url = remote.Url;
-        if (url.EndsWith(".git", StringComparison.OrdinalIgnoreCase))
-        {
-            url = url[..^4];
-        }
+        var remoteResult = await RunGitAsync(repoPath, ShortCommandTimeout, ["remote", "get-url", "origin"]);
+        var remoteUrl = remoteResult.StdOut.Trim();
 
         string? githubPath = null;
+        const string httpsPrefix = "https://github.com/";
+        const string sshPrefix = "git@github.com:";
 
-        if (Uri.TryCreate(url, UriKind.Absolute, out var uri)
-            && string.Equals(uri.Host, "github.com", StringComparison.OrdinalIgnoreCase))
+        if (remoteUrl.StartsWith(httpsPrefix, StringComparison.OrdinalIgnoreCase)
+            && remoteUrl.EndsWith(".git", StringComparison.OrdinalIgnoreCase))
         {
-            githubPath = uri.AbsolutePath.Trim('/');
+            githubPath = remoteUrl[httpsPrefix.Length..^4];
         }
-        else if (url.StartsWith("git@github.com:", StringComparison.OrdinalIgnoreCase))
+        else if (remoteUrl.StartsWith(sshPrefix, StringComparison.OrdinalIgnoreCase)
+            && remoteUrl.EndsWith(".git", StringComparison.OrdinalIgnoreCase))
         {
-            githubPath = url["git@github.com:".Length..];
+            githubPath = remoteUrl[sshPrefix.Length..^4];
         }
 
         if (string.IsNullOrWhiteSpace(githubPath))
         {
-            throw new InvalidOperationException($"Unsupported git remote format: {remote.Url}");
+            throw new InvalidOperationException($"Unsupported git remote format: {remoteUrl}");
         }
 
         var segments = githubPath.Split('/', StringSplitOptions.RemoveEmptyEntries);
         if (segments.Length < 2)
         {
-            throw new InvalidOperationException($"Unable to parse GitHub owner and repo from remote: {remote.Url}");
+            throw new InvalidOperationException($"Unable to parse GitHub owner and repo from remote: {remoteUrl}");
         }
 
         return (segments[0], segments[1]);
+    }
+
+    private async Task<GitCommandResult> RunGitAsync(string? workingDirectory, TimeSpan timeout, IReadOnlyList<string> arguments, IDictionary<string, string?>? extraEnvironment = null)
+    {
+        if (arguments.Count == 0)
+        {
+            throw new ArgumentException("At least one git argument is required.", nameof(arguments));
+        }
+
+        var gitExecutable = OperatingSystem.IsWindows() ? "git.exe" : "git";
+        using var process = new Process
+        {
+            StartInfo = new ProcessStartInfo
+            {
+                FileName = gitExecutable,
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true
+            }
+        };
+
+        if (!string.IsNullOrWhiteSpace(workingDirectory))
+        {
+            process.StartInfo.WorkingDirectory = workingDirectory;
+        }
+
+        foreach (var argument in arguments)
+        {
+            process.StartInfo.ArgumentList.Add(argument);
+        }
+
+        if (extraEnvironment != null)
+        {
+            foreach (var kvp in extraEnvironment)
+            {
+                process.StartInfo.Environment[kvp.Key] = kvp.Value;
+            }
+        }
+
+        process.StartInfo.Environment["GIT_TERMINAL_PROMPT"] = "0";
+
+        try
+        {
+            process.Start();
+        }
+        catch (Exception ex)
+        {
+            throw new InvalidOperationException($"Unable to start git executable '{gitExecutable}'. Ensure Git is installed and available on PATH.", ex);
+        }
+
+        var stdoutTask = process.StandardOutput.ReadToEndAsync();
+        var stderrTask = process.StandardError.ReadToEndAsync();
+
+        using var timeoutCts = new CancellationTokenSource(timeout);
+        try
+        {
+            await process.WaitForExitAsync(timeoutCts.Token);
+        }
+        catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested)
+        {
+            try
+            {
+                if (!process.HasExited)
+                {
+                    process.Kill(true);
+                }
+            }
+            catch
+            {
+            }
+
+            try
+            {
+                await process.WaitForExitAsync();
+            }
+            catch
+            {
+            }
+
+            await Task.WhenAll(stdoutTask, stderrTask);
+            throw new TimeoutException($"git {arguments[0]} timed out after {(int)timeout.TotalSeconds}s");
+        }
+
+        var stdout = await stdoutTask;
+        var stderr = await stderrTask;
+        var result = new GitCommandResult(process.ExitCode, stdout, stderr);
+
+        if (result.ExitCode != 0)
+        {
+            var message = string.IsNullOrWhiteSpace(result.StdErr)
+                ? result.StdOut.Trim()
+                : result.StdErr.Trim();
+            throw new InvalidOperationException($"git {arguments[0]} failed with exit code {result.ExitCode}: {message}");
+        }
+
+        return result;
     }
 }
 

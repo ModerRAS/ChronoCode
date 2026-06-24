@@ -44,17 +44,7 @@ public class PiRuntime : IAgentRuntime
             return;
         }
 
-        var startInfo = new ProcessStartInfo
-        {
-            FileName = Command,
-            UseShellExecute = false,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            CreateNoWindow = true
-        };
-        startInfo.ArgumentList.Add("--version");
-
-        using var process = new Process { StartInfo = startInfo };
+        using var process = new Process { StartInfo = CreateStartInfo(arguments: ["--version"]) };
         process.Start();
 
         var outputTask = process.StandardOutput.ReadToEndAsync(cancellationToken);
@@ -120,7 +110,7 @@ public class PiRuntime : IAgentRuntime
         {
             AgentMessageMode.Prompt => await SendPromptAsync(executionId, state, prompt, cancellationToken),
             AgentMessageMode.Steer => await QueueMessageAsync(executionId, state, prompt, "steer", cancellationToken),
-            AgentMessageMode.FollowUp => await QueueMessageAsync(executionId, state, prompt, "follow_up", cancellationToken),
+            AgentMessageMode.FollowUp => await SendFollowUpAsync(executionId, state, prompt, cancellationToken),
             _ => throw new ArgumentOutOfRangeException(nameof(mode), mode, null)
         };
     }
@@ -183,63 +173,59 @@ public class PiRuntime : IAgentRuntime
         string? sessionRef,
         CancellationToken cancellationToken)
     {
-        var startInfo = new ProcessStartInfo
+        var arguments = new List<string>
         {
-            FileName = Command,
-            WorkingDirectory = workingDirectory,
-            UseShellExecute = false,
-            RedirectStandardInput = true,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            CreateNoWindow = true
+            "--mode",
+            "rpc"
         };
-
-        startInfo.ArgumentList.Add("--mode");
-        startInfo.ArgumentList.Add("rpc");
 
         if (ApproveProjectTrust)
         {
-            startInfo.ArgumentList.Add("--approve");
+            arguments.Add("--approve");
         }
 
         if (!string.IsNullOrWhiteSpace(SessionDir))
         {
-            startInfo.ArgumentList.Add("--session-dir");
-            startInfo.ArgumentList.Add(SessionDir);
+            arguments.Add("--session-dir");
+            arguments.Add(SessionDir);
         }
 
         if (!string.IsNullOrWhiteSpace(Provider))
         {
-            startInfo.ArgumentList.Add("--provider");
-            startInfo.ArgumentList.Add(Provider);
+            arguments.Add("--provider");
+            arguments.Add(Provider);
         }
 
         if (!string.IsNullOrWhiteSpace(Model))
         {
-            startInfo.ArgumentList.Add("--model");
-            startInfo.ArgumentList.Add(Model);
+            arguments.Add("--model");
+            arguments.Add(Model);
         }
 
         if (!string.IsNullOrWhiteSpace(Thinking))
         {
-            startInfo.ArgumentList.Add("--thinking");
-            startInfo.ArgumentList.Add(Thinking);
+            arguments.Add("--thinking");
+            arguments.Add(Thinking);
         }
 
         var sessionName = BuildSessionName(executionId);
         if (!string.IsNullOrWhiteSpace(sessionName))
         {
-            startInfo.ArgumentList.Add("--name");
-            startInfo.ArgumentList.Add(sessionName);
+            arguments.Add("--name");
+            arguments.Add(sessionName);
         }
 
         if (!string.IsNullOrWhiteSpace(sessionRef))
         {
-            startInfo.ArgumentList.Add("--session");
-            startInfo.ArgumentList.Add(sessionRef);
+            arguments.Add("--session");
+            arguments.Add(sessionRef);
         }
 
-        var process = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
+        var process = new Process
+        {
+            StartInfo = CreateStartInfo(workingDirectory, arguments),
+            EnableRaisingEvents = true
+        };
         process.Start();
 
         var state = new PiExecutionState(process, workingDirectory, onChunk, _logger);
@@ -255,32 +241,53 @@ public class PiRuntime : IAgentRuntime
         return state;
     }
 
-    private async Task<string> SendPromptAsync(
+    private Task<string> SendPromptAsync(
         Guid executionId,
         PiExecutionState state,
         string prompt,
         CancellationToken cancellationToken)
     {
+        return SendBlockingMessageAsync(executionId, state, prompt, "prompt", cancellationToken);
+    }
+
+    private Task<string> SendFollowUpAsync(
+        Guid executionId,
+        PiExecutionState state,
+        string prompt,
+        CancellationToken cancellationToken)
+    {
+        return SendBlockingMessageAsync(executionId, state, prompt, "follow_up", cancellationToken);
+    }
+
+    private async Task<string> SendBlockingMessageAsync(
+        Guid executionId,
+        PiExecutionState state,
+        string prompt,
+        string commandType,
+        CancellationToken cancellationToken)
+    {
+        var previousPrompt = state.ActivePromptResult?.Task;
+        if (previousPrompt != null)
+        {
+            await previousPrompt.WaitAsync(cancellationToken);
+        }
+
         lock (state.SyncRoot)
         {
-            if (state.ActivePromptResult != null && !state.ActivePromptResult.Task.IsCompleted)
-            {
-                throw new InvalidOperationException($"Execution {executionId} already has a running prompt.");
-            }
-
             state.ActivePromptText.Clear();
             state.ActivePromptResult = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
         }
 
         var response = await QueueCommandAsync(
             state,
-            CreateCommand($"prompt-{executionId:N}", "prompt", prompt),
+            CreateCommand($"{commandType}-{executionId:N}", commandType, prompt),
             cancellationToken);
 
         if (!response.Success)
         {
-            CompletePromptWithError(state, response.Error ?? "Prompt rejected by pi.");
-            throw new InvalidOperationException(response.Error ?? "Prompt rejected by pi.");
+            var error = response.Error ?? (commandType == "prompt" ? "Prompt rejected by pi." : $"{commandType} rejected by pi.");
+            CompletePromptWithError(state, error);
+            throw new InvalidOperationException(error);
         }
 
         return await state.ActivePromptResult!.Task.WaitAsync(cancellationToken);
@@ -330,6 +337,47 @@ public class PiRuntime : IAgentRuntime
             state.PendingCommands.TryRemove(id, out _);
             throw;
         }
+    }
+
+    private ProcessStartInfo CreateStartInfo(string? workingDirectory = null, IEnumerable<string>? arguments = null)
+    {
+        var startInfo = new ProcessStartInfo
+        {
+            WorkingDirectory = workingDirectory ?? string.Empty,
+            UseShellExecute = false,
+            RedirectStandardInput = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true
+        };
+
+        var argumentList = arguments?.ToList() ?? [];
+        if (OperatingSystem.IsWindows() && RequiresCommandShell(Command))
+        {
+            startInfo.FileName = Environment.GetEnvironmentVariable("ComSpec") ?? "cmd.exe";
+            startInfo.ArgumentList.Add("/d");
+            startInfo.ArgumentList.Add("/c");
+            startInfo.ArgumentList.Add(Command);
+        }
+        else
+        {
+            startInfo.FileName = Command;
+        }
+
+        foreach (var argument in argumentList)
+        {
+            startInfo.ArgumentList.Add(argument);
+        }
+
+        return startInfo;
+    }
+
+    private static bool RequiresCommandShell(string command)
+    {
+        var extension = Path.GetExtension(command);
+        return string.IsNullOrWhiteSpace(extension)
+            || extension.Equals(".cmd", StringComparison.OrdinalIgnoreCase)
+            || extension.Equals(".bat", StringComparison.OrdinalIgnoreCase);
     }
 
     private static Dictionary<string, object?> CreateCommand(string idPrefix, string type, string? message = null)
@@ -397,7 +445,7 @@ public class PiRuntime : IAgentRuntime
                     case "message_update":
                         await HandleMessageUpdateAsync(state, root);
                         break;
-                    case "message_end":
+                    case "turn_end":
                         CompletePrompt(state);
                         break;
                     case "tool_execution_start":

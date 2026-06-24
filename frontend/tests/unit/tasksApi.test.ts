@@ -145,3 +145,90 @@ describe('taskApi node-scoped wrappers', () => {
     expect(mockApi.post).toHaveBeenCalledWith('/tasks', dto);
   });
 });
+
+describe('taskApi CRUD and server management', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('getAll calls GET /tasks', async () => {
+    const fakeTasks = [{ id: 't1', name: 'A' }, { id: 't2', name: 'B' }];
+    mockApi.get.mockResolvedValue({ data: fakeTasks });
+
+    const result = await taskApi.getAll();
+
+    expect(result).toEqual(fakeTasks);
+    expect(mockApi.get).toHaveBeenCalledWith('/tasks');
+  });
+
+  it('getById calls GET /tasks/{id}', async () => {
+    const fakeTask = { id: 't1', name: 'Single' };
+    mockApi.get.mockResolvedValue({ data: fakeTask });
+
+    const result = await taskApi.getById('t1');
+
+    expect(result).toEqual(fakeTask);
+    expect(mockApi.get).toHaveBeenCalledWith('/tasks/t1');
+  });
+
+  it('update calls PUT /tasks/{id} with partial data', async () => {
+    const fakeTask = { id: 't1', name: 'Updated' };
+    mockApi.put.mockResolvedValue({ data: fakeTask });
+
+    const partial = { name: 'Updated' };
+    const result = await taskApi.update('t1', partial);
+
+    expect(result).toEqual(fakeTask);
+    expect(mockApi.put).toHaveBeenCalledWith('/tasks/t1', partial);
+  });
+
+  it('delete calls DELETE /tasks/{id}', async () => {
+    mockApi.delete.mockResolvedValue({ data: undefined });
+
+    await taskApi.delete('t1');
+
+    expect(mockApi.delete).toHaveBeenCalledWith('/tasks/t1');
+  });
+
+  it('trigger calls POST /tasks/{id}/run', async () => {
+    mockApi.post.mockResolvedValue({ data: undefined });
+
+    await taskApi.trigger('t1');
+
+    expect(mockApi.post).toHaveBeenCalledWith('/tasks/t1/run');
+  });
+
+  it('getLogs calls GET /tasks/executions/{id}/logs', async () => {
+    const fakeLogs = [{ timestamp: '2024-01-01', level: 'info', message: 'hello' }];
+    mockApi.get.mockResolvedValue({ data: fakeLogs });
+
+    const result = await taskApi.getLogs('exec-1');
+
+    expect(result).toEqual(fakeLogs);
+    expect(mockApi.get).toHaveBeenCalledWith('/tasks/executions/exec-1/logs');
+  });
+
+  it('getServerStatus calls GET /tasks/server/status', async () => {
+    mockApi.get.mockResolvedValue({ data: { running: true } });
+
+    await taskApi.getServerStatus();
+
+    expect(mockApi.get).toHaveBeenCalledWith('/tasks/server/status');
+  });
+
+  it('startServer calls POST /tasks/server/start', async () => {
+    mockApi.post.mockResolvedValue({ data: undefined });
+
+    await taskApi.startServer();
+
+    expect(mockApi.post).toHaveBeenCalledWith('/tasks/server/start');
+  });
+
+  it('stopServer calls POST /tasks/server/stop', async () => {
+    mockApi.post.mockResolvedValue({ data: undefined });
+
+    await taskApi.stopServer();
+
+    expect(mockApi.post).toHaveBeenCalledWith('/tasks/server/stop');
+  });
+});

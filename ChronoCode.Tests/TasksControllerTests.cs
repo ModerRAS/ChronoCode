@@ -484,6 +484,107 @@ public class TasksControllerTests : IClassFixture<WebApplicationFactory<Program>
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }
 
+    [Fact]
+    public async Task Get_ExecutionLogs_ReturnsOkWithList()
+    {
+        var executionRepository = _scope.ServiceProvider.GetRequiredService<IExecutionRepository>();
+        var execution = await executionRepository.CreateAsync(new TaskExecution
+        {
+            Id = Guid.NewGuid(),
+            TaskId = Guid.NewGuid(),
+            Status = Models.TaskStatus.Running,
+            StartedAt = DateTime.UtcNow
+        });
+
+        var response = await _client.GetAsync($"/api/tasks/executions/{execution.Id}/logs");
+
+        response.EnsureSuccessStatusCode();
+        var content = await response.Content.ReadAsStringAsync();
+        Assert.StartsWith("[", content);
+    }
+
+    [Fact]
+    public async Task Get_ServerStatus_ReturnsOk()
+    {
+        var response = await _client.GetAsync("/api/tasks/server/status");
+
+        response.EnsureSuccessStatusCode();
+        var content = await response.Content.ReadAsStringAsync();
+        Assert.Contains("backend", content.ToLower());
+        Assert.Contains("running", content.ToLower());
+    }
+
+    [Fact]
+    public async Task Post_StartServer_ReturnsOk()
+    {
+        var response = await _client.PostAsync("/api/tasks/server/start", null);
+
+        response.EnsureSuccessStatusCode();
+        var content = await response.Content.ReadAsStringAsync();
+        Assert.Contains("backend", content.ToLower());
+    }
+
+    [Fact]
+    public async Task Post_StopServer_ReturnsOk()
+    {
+        var response = await _client.PostAsync("/api/tasks/server/stop", null);
+
+        response.EnsureSuccessStatusCode();
+    }
+
+    [Fact]
+    public async Task Get_Nodes_EmptyExecution_ReturnsOkWithEmptyArray()
+    {
+        var response = await _client.GetAsync($"/api/tasks/executions/{Guid.NewGuid()}/nodes");
+
+        response.EnsureSuccessStatusCode();
+        var content = await response.Content.ReadAsStringAsync();
+        Assert.StartsWith("[", content);
+    }
+
+    [Fact]
+    public async Task Get_Executions_NonExistentTask_ReturnsOkWithEmptyArray()
+    {
+        var response = await _client.GetAsync($"/api/tasks/{Guid.NewGuid()}/executions");
+
+        response.EnsureSuccessStatusCode();
+        var content = await response.Content.ReadAsStringAsync();
+        Assert.StartsWith("[", content);
+    }
+
+    [Fact]
+    public async Task Put_UpdateTask_WithInvalidCron_ReturnsBadRequest()
+    {
+        var createDto = new CreateTaskDto
+        {
+            Name = "Original Task",
+            CronExpression = "0 0 * * *",
+            RepositoryUrl = "https://github.com/test/repo",
+            WorkflowDefinitionJson = Models.Workflow.WorkflowDefinitionFactory.CreateDefaultJson(false, null)
+        };
+        var createResponse = await _client.PostAsJsonAsync("/api/tasks", createDto);
+        var created = await createResponse.Content.ReadFromJsonAsync<TaskDto>();
+
+        var dto = new
+        {
+            name = "Updated",
+            cronExpression = "bad-cron",
+            repositoryUrl = "https://github.com/test/repo",
+            baseBranch = "main",
+            branchStrategy = 0,
+            maxRuntimeSeconds = 600,
+            maxFileChanges = 50,
+            isEnabled = true,
+            workflowDefinitionJson = Models.Workflow.WorkflowDefinitionFactory.CreateDefaultJson(false, null),
+            maxConcurrentRuns = 1,
+            nodeFailurePolicyJson = "{}"
+        };
+
+        var response = await _client.PutAsJsonAsync($"/api/tasks/{created!.Id}", dto);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
     private async Task<(TaskExecution execution, ChronoCode.Models.Workflow.WorkflowNodeExecution node)> CreateNodeSessionAsync(
         string sessionId, string sessionFile, string workingDirectory)
     {

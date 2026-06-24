@@ -207,3 +207,83 @@ describe('WorkflowGraph.vue', () => {
     expect(agentNode?.classes()).toContain('wf-node--retrying')
   })
 })
+
+describe('WorkflowGraph computed properties', () => {
+  const parallelDefinition = {
+    version: 1,
+    startNodeId: 'start',
+    nodes: [
+      { nodeId: 'start', nodeType: 'start', name: 'Start', nextNodeId: 'agent' },
+      { nodeId: 'agent', nodeType: 'agent', name: 'Agent', nextNodeId: 'commit' },
+      { nodeId: 'commit', nodeType: 'commit_changes', name: 'Commit', nextNodeId: null },
+    ],
+  }
+
+  const stubs = {
+    '@vue-flow/core': {
+      VueFlow: { template: '<div class="vue-flow"><slot /></div>' },
+      Background: { template: '<div class="vue-flow-bg" />' },
+      Controls: { template: '<div />' },
+      MiniMap: { template: '<div />' },
+      Panel: { template: '<div><slot /></div>' },
+    },
+  }
+
+  it('hasDefinition returns true when definition provided', () => {
+    const wrapper = mount(WorkflowGraph, {
+      props: { definition: parallelDefinition },
+      global: { stubs },
+    })
+    expect(wrapper.exists()).toBe(true)
+  })
+
+  it('renders correct number of nodes', () => {
+    const wrapper = mount(WorkflowGraph, {
+      props: { definition: parallelDefinition },
+      global: { stubs },
+    })
+    const nodes = wrapper.findAll('.wf-node')
+    expect(nodes.length).toBe(3)
+  })
+
+  it('renders Start node with correct label', () => {
+    const wrapper = mount(WorkflowGraph, {
+      props: { definition: parallelDefinition },
+      global: { stubs },
+    })
+    const labels = wrapper.findAll('.wf-node__label')
+    expect(labels.some(l => l.text() === 'Start')).toBe(true)
+  })
+
+  it('renders node type labels for all nodes', () => {
+    const wrapper = mount(WorkflowGraph, {
+      props: { definition: parallelDefinition },
+      global: { stubs },
+    })
+    const typeLabels = wrapper.findAll('.wf-node__type')
+    expect(typeLabels.length).toBeGreaterThanOrEqual(3)
+  })
+
+  it('renders multiple node executions with different statuses', () => {
+    const wrapper = mount(WorkflowGraph, {
+      props: {
+        definition: parallelDefinition,
+        nodeExecutions: [
+          { id: 'e1', executionId: 'exec-1', nodeId: 'start', nodeType: 'start', scopeKey: 'root', attempt: 0, status: 'completed', startedAt: '2024-01-01T00:00:00Z' },
+          { id: 'e2', executionId: 'exec-1', nodeId: 'agent', nodeType: 'agent', scopeKey: 'root', attempt: 0, status: 'running', startedAt: '2024-01-01T00:00:00Z' },
+          { id: 'e3', executionId: 'exec-1', nodeId: 'commit', nodeType: 'commit_changes', scopeKey: 'root', attempt: 0, status: 'pending', startedAt: '2024-01-01T00:00:00Z' },
+        ],
+      },
+      global: { stubs },
+    })
+
+    const nodes = wrapper.findAll('.wf-node')
+    expect(nodes.length).toBe(3)
+    // Start should be completed
+    const startNode = nodes.find(n => n.find('.wf-node__label').text() === 'Start')
+    expect(startNode?.classes()).toContain('wf-node--completed')
+    // Agent should be running
+    const agentNode = nodes.find(n => n.find('.wf-node__label').text() === 'Agent')
+    expect(agentNode?.classes()).toContain('wf-node--running')
+  })
+})

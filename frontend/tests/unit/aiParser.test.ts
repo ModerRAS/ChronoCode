@@ -160,4 +160,74 @@ describe('aiParser', () => {
     const result = parseAIResponse(JSON.stringify(payload));
     expect(result).toBeNull();
   });
+
+  it('returns null for empty string input', () => {
+    expect(parseAIResponse('')).toBeNull();
+  });
+
+  it('returns null when json code fence contains invalid JSON', () => {
+    const result = parseAIResponse('```json\n{invalid}\n```');
+    expect(result).toBeNull();
+  });
+
+  it('parses create_task with all optional fields populated', () => {
+    const payload = {
+      action: 'create_task',
+      task: {
+        name: 'Full Task',
+        cron: '*/5 * * * *',
+        repository: 'https://github.com/org/repo',
+        base_branch: 'develop',
+        branch_strategy: 'reuse',
+        max_runtime_seconds: 3600,
+        max_file_changes: 100,
+        is_enabled: false,
+        max_concurrent_runs: 5,
+        runtime_backend: 'pi',
+        workflow_definition_json: workflowDefinitionJson,
+        default_inputs_json: '{"key":"val"}',
+        node_failure_policy_json: '{"maxRetries":3}',
+      },
+    };
+
+    const result = parseAIResponse(JSON.stringify(payload));
+
+    expect(result).not.toBeNull();
+    expect(result?.action).toBe('create_task');
+    expect(result?.task?.base_branch).toBe('develop');
+    expect(result?.task?.branch_strategy).toBe('reuse');
+    expect(result?.task?.max_runtime_seconds).toBe(3600);
+    expect(result?.task?.is_enabled).toBe(false);
+    expect(result?.task?.max_concurrent_runs).toBe(5);
+    expect(result?.task?.runtime_backend).toBe('pi');
+  });
+
+  it('isActionableAIResponse returns false for null and undefined', () => {
+    expect(isActionableAIResponse(null)).toBe(false);
+    expect(isActionableAIResponse(undefined)).toBe(false);
+  });
+
+  it('isActionableAIResponse returns true for actionable responses', () => {
+    const payload = {
+      action: 'trigger_task',
+      task_id: '123e4567-e89b-12d3-a456-426614174000',
+      task: null,
+      error: null,
+    };
+    const result = parseAIResponse(JSON.stringify(payload));
+    expect(isActionableAIResponse(result)).toBe(true);
+  });
+
+  it('parses info response with custom error code', () => {
+    const payload = {
+      action: '',
+      task: null,
+      error: { code: 'CLARIFICATION', message: 'Which repository?' },
+    };
+    const result = parseAIResponse(JSON.stringify(payload));
+
+    expect(result).not.toBeNull();
+    expect(result?.error?.code).toBe('CLARIFICATION');
+    expect(result?.error?.message).toBe('Which repository?');
+  });
 });

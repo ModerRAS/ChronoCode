@@ -27,10 +27,11 @@ describe('useAIChat', () => {
     expect(error.value).toBeNull();
   });
 
-  it('sends message and receives AI response', async () => {
+  it('sends message and displays the natural language response', async () => {
     const aiResponse = JSON.stringify({
-      action: 'create_task',
-      task: { name: 'Test', cron: '0 9 * * *', repository: 'https://github.com/test/repo' },
+      action: '',
+      task: null,
+      error: { code: 'INFO', message: 'Created a daily build task for you.' },
     });
 
     mockFetch.mockResolvedValueOnce({
@@ -45,7 +46,24 @@ describe('useAIChat', () => {
     expect(messages.value[0].role).toBe('user');
     expect(messages.value[0].content).toBe('Create a task');
     expect(messages.value[1].role).toBe('ai');
-    expect(messages.value[1].content).toBe(aiResponse);
+    expect(messages.value[1].content).toBe('Created a daily build task for you.');
+  });
+
+  it('summarizes actionable legacy responses without confirmation buttons', async () => {
+    const aiResponse = JSON.stringify({
+      action: 'create_task',
+      task: { name: 'Test', cron: '0 9 * * *', repository: 'https://github.com/test/repo' },
+    });
+
+    mockFetch.mockResolvedValueOnce({
+      text: () => Promise.resolve(aiResponse),
+    });
+
+    const { messages, sendMessage } = useAIChat('/api');
+
+    await sendMessage('Create a task');
+
+    expect(messages.value[1].content).toBe('Action: Create task\nTask: Test');
   });
 
   it('sets isLoading during request', async () => {

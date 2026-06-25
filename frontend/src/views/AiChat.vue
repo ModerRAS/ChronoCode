@@ -33,25 +33,7 @@
               <span class="message-time">{{ formatTime(msg.timestamp) }}</span>
             </div>
             <div class="message-body">
-              <pre v-if="parsedResponses[msg.id]">{{ JSON.stringify(parsedResponses[msg.id], null, 2) }}</pre>
-              <pre v-else>{{ msg.content }}</pre>
-            </div>
-            
-            <div v-if="isActionableAIResponse(parsedResponses[msg.id]) && !confirmedResponses[msg.id]" class="action-buttons">
-              <a-divider />
-              <p class="action-prompt">Would you like me to execute this action?</p>
-              <a-space>
-                <a-button type="primary" @click="confirmAction(msg.id)">Confirm</a-button>
-                <a-button @click="dismissAction(msg.id)">Dismiss</a-button>
-              </a-space>
-            </div>
-            
-            <div v-if="actionResults[msg.id]" :class="['action-result', actionResults[msg.id].success ? 'success' : 'error']">
-              <a-alert
-                :message="actionResults[msg.id].message"
-                :type="actionResults[msg.id].success ? 'success' : 'error'"
-                show-icon
-              />
+              <pre>{{ msg.content }}</pre>
             </div>
           </div>
         </div>
@@ -81,14 +63,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, nextTick, watch } from 'vue'
+import { ref, nextTick, watch } from 'vue'
 import { useAIChat } from '../composables/useAIChat'
-import {
-  isActionableAIResponse,
-  parseAIResponse,
-  type AIStructuredResponse,
-} from '../utils/aiParser'
-import { executeAIResponse, type ExecuteResult } from '../utils/taskApiIntegration'
 
 const OPENCODE_API_BASE = '/api'
 
@@ -96,38 +72,14 @@ const { messages, isLoading, error, sendMessage } = useAIChat(OPENCODE_API_BASE)
 
 const inputMessage = ref('')
 const messagesContainer = ref<HTMLElement | null>(null)
-const parsedResponses = reactive<Record<string, AIStructuredResponse | null>>({})
-const confirmedResponses = reactive<Record<string, boolean>>({})
-const actionResults = reactive<Record<string, ExecuteResult>>({})
 
 const handleSend = async () => {
   if (!inputMessage.value.trim()) return
-  
+
   const content = inputMessage.value
   inputMessage.value = ''
-  
+
   await sendMessage(content)
-  
-  const lastMsg = messages.value[messages.value.length - 1]
-  if (lastMsg && lastMsg.role === 'ai') {
-    parsedResponses[lastMsg.id] = parseAIResponse(lastMsg.content)
-  }
-}
-
-const confirmAction = async (msgId: string) => {
-  const parsed = parsedResponses[msgId]
-  if (!isActionableAIResponse(parsed)) return
-  
-  confirmedResponses[msgId] = true
-  actionResults[msgId] = { success: false, message: 'Executing...' }
-  
-  const result = await executeAIResponse(parsed)
-  actionResults[msgId] = result
-}
-
-const dismissAction = (msgId: string) => {
-  confirmedResponses[msgId] = true
-  actionResults[msgId] = { success: false, message: 'Action dismissed' }
 }
 
 const prefillMessage = (text: string) => {
@@ -136,9 +88,6 @@ const prefillMessage = (text: string) => {
 
 const clearChat = () => {
   messages.value = []
-  Object.keys(parsedResponses).forEach(key => delete parsedResponses[key])
-  Object.keys(confirmedResponses).forEach(key => delete confirmedResponses[key])
-  Object.keys(actionResults).forEach(key => delete actionResults[key])
 }
 
 const formatTime = (date: Date) => {
@@ -295,20 +244,6 @@ watch(messages, async () => {
 .message.ai.loading .message-content {
   display: flex;
   align-items: center;
-}
-
-.action-buttons {
-  margin-top: 12px;
-}
-
-.action-prompt {
-  margin: 0 0 8px;
-  font-size: 13px;
-  color: var(--ant-text-color-secondary, rgba(0, 0, 0, 0.45));
-}
-
-.action-result {
-  margin-top: 12px;
 }
 
 .input-container {

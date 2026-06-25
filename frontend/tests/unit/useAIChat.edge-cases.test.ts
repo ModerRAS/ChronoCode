@@ -88,13 +88,13 @@ describe('useAIChat edge cases', () => {
     expect(messages.value[1].timestamp).toBeInstanceOf(Date)
   })
 
-  it('returns null from sendMessage', async () => {
+  it('resolves without value from sendMessage', async () => {
     mockFetch.mockResolvedValue({ text: () => Promise.resolve('ok') })
 
     const { sendMessage } = useAIChat('/api')
     const result = await sendMessage('test')
 
-    expect(result).toBeNull()
+    expect(result).toBeUndefined()
   })
 
   it('resets isLoading to false after error', async () => {

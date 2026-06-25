@@ -1,5 +1,5 @@
 import { ref } from 'vue';
-import type { AIStructuredResponse } from '../utils/aiParser';
+import { parseAIResponse } from '../utils/aiParser';
 
 interface Message {
   id: string;
@@ -20,12 +20,39 @@ function generateId(): string {
   });
 }
 
+function extractDisplayText(raw: string): string {
+  const parsed = parseAIResponse(raw);
+  if (!parsed) {
+    return raw;
+  }
+
+  if (parsed.action === '') {
+    return parsed.error?.message ?? raw;
+  }
+
+  // Actionable fallback (legacy prompt mode) – summarize without asking for confirmation,
+  // since the backend skill path now executes actions directly.
+  const actionLabels: Record<string, string> = {
+    create_task: 'Create task',
+    update_task: 'Update task',
+    delete_task: 'Delete task',
+    trigger_task: 'Trigger task',
+  };
+  const taskName = parsed.task?.name;
+  const taskId = parsed.task_id;
+  return [
+    `Action: ${actionLabels[parsed.action] ?? parsed.action}`,
+    taskName ? `Task: ${taskName}` : null,
+    taskId ? `Task ID: ${taskId}` : null,
+  ].filter(Boolean).join('\n');
+}
+
 export function useAIChat(opencodeApiBase: string) {
   const messages = ref<Message[]>([]);
   const isLoading = ref(false);
   const error = ref<string | null>(null);
 
-  const sendMessage = async (content: string): Promise<AIStructuredResponse | null> => {
+  const sendMessage = async (content: string): Promise<void> => {
     isLoading.value = true;
     error.value = null;
 
@@ -44,18 +71,16 @@ export function useAIChat(opencodeApiBase: string) {
       });
 
       const data = await response.text();
-      
+      const displayText = extractDisplayText(data);
+
       messages.value.push({
         id: generateId(),
         role: 'ai',
-        content: data,
+        content: displayText,
         timestamp: new Date()
       });
-
-      return null;
     } catch (e) {
       error.value = e instanceof Error ? e.message : 'Network error';
-      return null;
     } finally {
       isLoading.value = false;
     }

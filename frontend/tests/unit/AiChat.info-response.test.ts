@@ -17,14 +17,9 @@ const sendMessage = vi.fn(async (content: string) => {
   messages.value.push({
     id: 'ai-1',
     role: 'ai',
-    content: JSON.stringify({
-      action: '',
-      task: null,
-      error: { code: 'INFO', message: 'Here is some help' },
-    }),
+    content: 'Here is some help',
     timestamp: new Date(),
   })
-  return null
 })
 
 vi.mock('../../src/composables/useAIChat', () => ({
@@ -66,7 +61,7 @@ function mountChat() {
 }
 
 describe('AiChat info responses', () => {
-  it('does not render action buttons for non-actionable info responses', async () => {
+  it('renders natural language responses without action buttons', async () => {
     messages.value = []
     error.value = null
     sendMessage.mockClear()
@@ -79,47 +74,46 @@ describe('AiChat info responses', () => {
 
     expect(sendMessage).toHaveBeenCalledTimes(1)
     expect(wrapper.find('.action-buttons').exists()).toBe(false)
-    expect(wrapper.text()).toContain('"action": ""')
     expect(wrapper.text()).toContain('Here is some help')
   })
 })
 
-describe('AiChat actionable responses', () => {
-  it('renders action buttons for create_task and triggers confirm flow', async () => {
+describe('AiChat common behavior', () => {
+  it('renders error alert when error is set', async () => {
     messages.value = []
-    error.value = null
-
-    const actionableResponse = JSON.stringify({
-      action: 'create_task',
-      task_id: null,
-      task: {
-        name: 'Daily Build',
-        cron: '0 9 * * *',
-        repository: 'https://github.com/test/repo',
-        workflow_definition_json: JSON.stringify({ version: 1, startNodeId: 'start', nodes: [] }),
-        runtime_backend: 'pi',
-        max_concurrent_runs: 1,
-        node_failure_policy_json: '{}',
-      },
-      error: null,
-    })
-
-    sendMessage.mockImplementationOnce(async (content: string) => {
-      messages.value.push({ id: 'user-1', role: 'user', content, timestamp: new Date() })
-      messages.value.push({ id: 'ai-1', role: 'ai', content: actionableResponse, timestamp: new Date() })
-      return null
-    })
+    error.value = 'Something went wrong'
 
     const wrapper = mountChat()
 
-    // Type a message so handleSend doesn't short-circuit on empty input
-    await wrapper.find('.search-input').setValue('Create a daily build task')
-    await wrapper.find('.search-button').trigger('click')
-    await flushPromises()
+    expect(wrapper.find('.a-alert').exists()).toBe(true)
+  })
 
-    // Action buttons should be visible for actionable responses
-    expect(wrapper.find('.action-buttons').exists()).toBe(true)
-    expect(wrapper.text()).toContain('create_task')
-    expect(wrapper.text()).toContain('Daily Build')
+  it('clears messages when clear button is clicked', async () => {
+    messages.value = [
+      { id: 'm1', role: 'user', content: 'hello', timestamp: new Date() },
+      { id: 'm2', role: 'ai', content: 'Hi there', timestamp: new Date() },
+    ]
+    error.value = null
+
+    const wrapper = mountChat()
+    const buttons = wrapper.findAll('button')
+    const clearBtn = buttons.find(b => b.text().includes('Clear'))
+    expect(clearBtn).toBeDefined()
+
+    await clearBtn!.trigger('click')
+
+    expect(messages.value.length).toBe(0)
+  })
+
+  it('shows loading spinner when isLoading is true', async () => {
+    messages.value = []
+    error.value = null
+    isLoading.value = true
+
+    const wrapper = mountChat()
+
+    expect(wrapper.find('.a-spin').exists()).toBe(true)
+
+    isLoading.value = false
   })
 })

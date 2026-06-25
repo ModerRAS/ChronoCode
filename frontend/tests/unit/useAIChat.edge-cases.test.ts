@@ -4,9 +4,17 @@ import { useAIChat } from '../../src/composables/useAIChat'
 const mockFetch = vi.fn()
 vi.stubGlobal('fetch', mockFetch)
 
+const mockLocalStorage = {
+  getItem: vi.fn(() => null),
+  setItem: vi.fn(),
+  removeItem: vi.fn(),
+}
+vi.stubGlobal('localStorage', mockLocalStorage)
+
 describe('useAIChat edge cases', () => {
   beforeEach(() => {
     mockFetch.mockReset()
+    mockLocalStorage.getItem.mockReturnValue(null)
   })
 
   afterEach(() => {

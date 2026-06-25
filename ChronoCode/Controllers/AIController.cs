@@ -49,7 +49,7 @@ public class AIController : ControllerBase
         try
         {
             var cancellationToken = HttpContext?.RequestAborted ?? CancellationToken.None;
-            var response = await _chatRuntimeService.SendChatMessageAsync(request.Message, cancellationToken);
+            var response = await _chatRuntimeService.SendChatMessageAsync(request.Message, request.History, cancellationToken);
 
             try
             {

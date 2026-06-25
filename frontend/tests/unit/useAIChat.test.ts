@@ -10,9 +10,18 @@ vi.stubGlobal('crypto', {
   randomUUID: () => 'test-uuid-0001',
 });
 
+// Mock localStorage for isolated tests
+const mockLocalStorage = {
+  getItem: vi.fn(() => null),
+  setItem: vi.fn(),
+  removeItem: vi.fn(),
+};
+vi.stubGlobal('localStorage', mockLocalStorage);
+
 describe('useAIChat', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockLocalStorage.getItem.mockReturnValue(null);
   });
 
   afterEach(() => {
@@ -101,7 +110,7 @@ describe('useAIChat', () => {
     expect(error.value).toBe('Network error');
   });
 
-  it('calls fetch with correct URL and body', async () => {
+  it('calls fetch with correct URL, message and history', async () => {
     mockFetch.mockResolvedValueOnce({ text: () => Promise.resolve('{}') });
 
     const { sendMessage } = useAIChat('/api');
@@ -115,6 +124,25 @@ describe('useAIChat', () => {
     expect(options.headers['Content-Type']).toBe('application/json');
     const body = JSON.parse(options.body);
     expect(body.message).toBe('Create a build task');
+    expect(body.history).toEqual([]);
+  });
+
+  it('sends previous messages as history', async () => {
+    mockFetch
+      .mockResolvedValueOnce({ text: () => Promise.resolve('first response') })
+      .mockResolvedValueOnce({ text: () => Promise.resolve('second response') });
+
+    const { sendMessage } = useAIChat('/api');
+
+    await sendMessage('first');
+    await sendMessage('second');
+
+    const secondCall = mockFetch.mock.calls[1];
+    const body = JSON.parse(secondCall[1].body);
+    expect(body.history).toEqual([
+      { role: 'user', content: 'first' },
+      { role: 'ai', content: 'first response' },
+    ]);
   });
 
   it('clears error on new message', async () => {
@@ -131,10 +159,9 @@ describe('useAIChat', () => {
   });
 
   it('generates unique message IDs', async () => {
-    // Reset mock to return different UUIDs each call
-    let uuidCounter = 0;
+    let callCount = 0;
     vi.stubGlobal('crypto', {
-      randomUUID: () => `test-uuid-${String(++uuidCounter).padStart(4, '0')}`,
+      randomUUID: () => `uuid-${++callCount}`,
     });
 
     mockFetch.mockResolvedValueOnce({ text: () => Promise.resolve('{}') });
@@ -143,8 +170,10 @@ describe('useAIChat', () => {
 
     await sendMessage('test');
 
-    expect(messages.value[0].id).toBe('test-uuid-0001');
-    expect(messages.value[1].id).toBe('test-uuid-0002');
+    expect(messages.value[0].id).toBe('uuid-1');
+    expect(messages.value[1].id).toBe('uuid-2');
     expect(messages.value[0].id).not.toBe(messages.value[1].id);
+
+    vi.stubGlobal('crypto', { randomUUID: () => 'test-uuid-0001' });
   });
 });

@@ -7,18 +7,18 @@ const mockMessages = ref<any[]>([])
 const mockIsLoading = ref(false)
 const mockError = ref<string | null>(null)
 const mockSendMessage = vi.fn()
+const mockClearChat = vi.fn(() => {
+  mockMessages.value = []
+})
 
 vi.mock('../../src/composables/useAIChat', () => ({
   useAIChat: () => ({
     messages: mockMessages,
     isLoading: mockIsLoading,
     error: mockError,
-    sendMessage: mockSendMessage
+    sendMessage: mockSendMessage,
+    clearChat: mockClearChat,
   })
-}))
-
-vi.mock('../../src/utils/taskApiIntegration', () => ({
-  executeAIResponse: vi.fn().mockResolvedValue({ success: true, message: 'Done' }),
 }))
 
 const stubs = {
@@ -158,22 +158,18 @@ describe('AiChat.vue interactions', () => {
     expect(wrapper.find('.empty-state').exists()).toBe(true)
   })
 
-  it('renders action prompt text when actionable response exists', async () => {
-    // Set up a message with parsed response by mocking the parsedResponses
+  it('renders AI message content', async () => {
     mockMessages.value = [
       {
         id: '1',
         role: 'ai',
-        content: '```json\n{"action":"create_task","task":{"name":"Test","cron":"0 0 * * *","repository":"https://github.com/x/y"}}\n```',
+        content: 'Created a new task for you.',
         timestamp: new Date()
       }
     ]
     const wrapper = mount(AiChat, { global: { stubs } })
-    // The parsed response should be set after mount (via watch on messages)
-    // Since we pre-populate messages, the watch won't fire handleSend
-    // But we can verify the message content is rendered
     const pre = wrapper.find('.message-body pre')
     expect(pre.exists()).toBe(true)
-    expect(pre.text()).toContain('create_task')
+    expect(pre.text()).toContain('Created a new task for you.')
   })
 })

@@ -1,4 +1,4 @@
-import { ref } from 'vue';
+import { ref, watch } from 'vue';
 import { parseAIResponse } from '../utils/aiParser';
 
 interface Message {
@@ -7,6 +7,13 @@ interface Message {
   content: string;
   timestamp: Date;
 }
+
+interface HistoryMessage {
+  role: 'user' | 'ai';
+  content: string;
+}
+
+const STORAGE_KEY = 'chronocode-ai-chat-messages';
 
 function generateId(): string {
   if (typeof crypto !== 'undefined' && crypto.randomUUID) {
@@ -18,6 +25,38 @@ function generateId(): string {
     const v = c === 'x' ? r : (r & 0x3) | 0x8;
     return v.toString(16);
   });
+}
+
+function loadMessages(): Message[] {
+  if (typeof window === 'undefined') {
+    return [];
+  }
+
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) {
+      return [];
+    }
+
+    const parsed = JSON.parse(raw) as Array<Omit<Message, 'timestamp'> & { timestamp: string }>;
+    return Array.isArray(parsed)
+      ? parsed.map((m) => ({ ...m, timestamp: new Date(m.timestamp) }))
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveMessages(items: Message[]): void {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
+  } catch {
+    // Ignore storage errors (e.g. quota exceeded, private mode).
+  }
 }
 
 function extractDisplayText(raw: string): string {
@@ -48,9 +87,17 @@ function extractDisplayText(raw: string): string {
 }
 
 export function useAIChat(opencodeApiBase: string) {
-  const messages = ref<Message[]>([]);
+  const messages = ref<Message[]>(loadMessages());
   const isLoading = ref(false);
   const error = ref<string | null>(null);
+
+  watch(
+    messages,
+    (items) => {
+      saveMessages(items);
+    },
+    { deep: true }
+  );
 
   const sendMessage = async (content: string): Promise<void> => {
     isLoading.value = true;
@@ -64,10 +111,14 @@ export function useAIChat(opencodeApiBase: string) {
     });
 
     try {
+      const history: HistoryMessage[] = messages.value
+        .slice(0, -1)
+        .map(({ role, content }) => ({ role, content }));
+
       const response = await fetch(`${opencodeApiBase}/ai/message`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: content })
+        body: JSON.stringify({ message: content, history })
       });
 
       const data = await response.text();
@@ -86,5 +137,16 @@ export function useAIChat(opencodeApiBase: string) {
     }
   };
 
-  return { messages, isLoading, error, sendMessage };
+  const clearChat = (): void => {
+    messages.value = [];
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.removeItem(STORAGE_KEY);
+      } catch {
+        // Ignore storage errors.
+      }
+    }
+  };
+
+  return { messages, isLoading, error, sendMessage, clearChat };
 }

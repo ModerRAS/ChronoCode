@@ -68,7 +68,7 @@ import { useAIChat } from '../composables/useAIChat'
 
 const OPENCODE_API_BASE = '/api'
 
-const { messages, isLoading, error, sendMessage } = useAIChat(OPENCODE_API_BASE)
+const { messages, isLoading, error, sendMessage, clearChat } = useAIChat(OPENCODE_API_BASE)
 
 const inputMessage = ref('')
 const messagesContainer = ref<HTMLElement | null>(null)
@@ -86,9 +86,7 @@ const prefillMessage = (text: string) => {
   inputMessage.value = text
 }
 
-const clearChat = () => {
-  messages.value = []
-}
+
 
 const formatTime = (date: Date) => {
   return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })

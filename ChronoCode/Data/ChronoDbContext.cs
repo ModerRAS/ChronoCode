@@ -13,6 +13,8 @@ public class ChronoDbContext : DbContext
     public DbSet<ScheduledTask> ScheduledTasks => Set<ScheduledTask>();
     public DbSet<TaskExecution> TaskExecutions => Set<TaskExecution>();
     public DbSet<WorkflowNodeExecution> WorkflowNodeExecutions => Set<WorkflowNodeExecution>();
+    public DbSet<ChatConversation> ChatConversations => Set<ChatConversation>();
+    public DbSet<ChatMessage> ChatMessages => Set<ChatMessage>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -120,6 +122,33 @@ public class ChronoDbContext : DbContext
             entity.HasOne<TaskExecution>()
                   .WithMany()
                   .HasForeignKey(e => e.ExecutionId)
+                  .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<ChatConversation>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Id).ValueGeneratedNever();
+            entity.Property(e => e.Title).HasMaxLength(256);
+            entity.Property(e => e.AgentSessionFile).HasMaxLength(1024);
+            entity.Property(e => e.AgentSessionId).HasMaxLength(256);
+            entity.Property(e => e.WorkingDirectory).HasMaxLength(1024).IsRequired();
+            entity.Property(e => e.CreatedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
+            entity.Property(e => e.UpdatedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
+        });
+
+        modelBuilder.Entity<ChatMessage>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Id).ValueGeneratedNever();
+            entity.Property(e => e.Role).HasMaxLength(32).IsRequired();
+            entity.Property(e => e.CreatedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
+
+            entity.HasIndex(e => e.ConversationId);
+
+            entity.HasOne<ChatConversation>()
+                  .WithMany(c => c.Messages)
+                  .HasForeignKey(e => e.ConversationId)
                   .OnDelete(DeleteBehavior.Cascade);
         });
     }

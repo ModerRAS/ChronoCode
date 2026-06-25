@@ -22,9 +22,11 @@ const sendMessage = vi.fn(async (content: string) => {
   })
 })
 
-const clearChat = vi.fn(() => {
+const clearChat = vi.fn(async () => {
   messages.value = []
 })
+
+const loadConversation = vi.fn(async () => {})
 
 vi.mock('../../src/composables/useAIChat', () => ({
   useAIChat: () => ({
@@ -33,6 +35,7 @@ vi.mock('../../src/composables/useAIChat', () => ({
     error,
     sendMessage,
     clearChat,
+    loadConversation,
   }),
 }))
 

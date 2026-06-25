@@ -7,9 +7,11 @@ const mockMessages = ref<any[]>([])
 const mockIsLoading = ref(false)
 const mockError = ref<string | null>(null)
 const mockSendMessage = vi.fn()
-const mockClearChat = vi.fn(() => {
+const mockClearChat = vi.fn(async () => {
   mockMessages.value = []
 })
+
+const mockLoadConversation = vi.fn(async () => {})
 
 vi.mock('../../src/composables/useAIChat', () => ({
   useAIChat: () => ({
@@ -18,6 +20,7 @@ vi.mock('../../src/composables/useAIChat', () => ({
     error: mockError,
     sendMessage: mockSendMessage,
     clearChat: mockClearChat,
+    loadConversation: mockLoadConversation,
   })
 }))
 

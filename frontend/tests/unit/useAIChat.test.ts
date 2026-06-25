@@ -1,16 +1,20 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { useAIChat } from '../../src/composables/useAIChat';
 
-// Mock global fetch
-const mockFetch = vi.fn();
-vi.stubGlobal('fetch', mockFetch);
+const mockCreateConversation = vi.fn();
+const mockGetConversation = vi.fn();
+const mockSendMessage = vi.fn();
+const mockDeleteConversation = vi.fn();
 
-// Mock crypto.randomUUID for deterministic IDs
-vi.stubGlobal('crypto', {
-  randomUUID: () => 'test-uuid-0001',
-});
+vi.mock('../../src/api/chat', () => ({
+  chatApi: {
+    createConversation: (...args: unknown[]) => mockCreateConversation(...args),
+    getConversation: (...args: unknown[]) => mockGetConversation(...args),
+    sendMessage: (...args: unknown[]) => mockSendMessage(...args),
+    deleteConversation: (...args: unknown[]) => mockDeleteConversation(...args),
+  },
+}));
 
-// Mock localStorage for isolated tests
 const mockLocalStorage = {
   getItem: vi.fn(() => null),
   setItem: vi.fn(),
@@ -29,26 +33,89 @@ describe('useAIChat', () => {
   });
 
   it('starts with empty messages and no loading', () => {
-    const { messages, isLoading, error } = useAIChat('/api');
+    const { messages, isLoading, error } = useAIChat();
 
     expect(messages.value).toEqual([]);
     expect(isLoading.value).toBe(false);
     expect(error.value).toBeNull();
   });
 
-  it('sends message and displays the natural language response', async () => {
-    const aiResponse = JSON.stringify({
-      action: '',
-      task: null,
-      error: { code: 'INFO', message: 'Created a daily build task for you.' },
+  it('creates a new conversation when none is stored', async () => {
+    mockCreateConversation.mockResolvedValue({
+      id: 'conv-1',
+      title: null,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      messages: [],
     });
 
-    mockFetch.mockResolvedValueOnce({
-      text: () => Promise.resolve(aiResponse),
+    const { messages, loadConversation } = useAIChat();
+    await loadConversation();
+
+    expect(mockCreateConversation).toHaveBeenCalledTimes(1);
+    expect(messages.value).toEqual([]);
+  });
+
+  it('loads an existing conversation from the backend', async () => {
+    mockLocalStorage.getItem.mockReturnValue('conv-1');
+    mockGetConversation.mockResolvedValue({
+      id: 'conv-1',
+      title: null,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      messages: [
+        { id: 'm1', role: 'user', content: 'hello', createdAt: new Date().toISOString() },
+        { id: 'm2', role: 'ai', content: 'hi', createdAt: new Date().toISOString() },
+      ],
     });
 
-    const { messages, isLoading, sendMessage } = useAIChat('/api');
+    const { messages, loadConversation } = useAIChat();
+    await loadConversation();
 
+    expect(mockGetConversation).toHaveBeenCalledWith('conv-1');
+    expect(messages.value.length).toBe(2);
+    expect(messages.value[0].role).toBe('user');
+    expect(messages.value[1].role).toBe('ai');
+  });
+
+  it('recovers from a missing stored conversation by creating a new one', async () => {
+    mockLocalStorage.getItem.mockReturnValue('dead-conv');
+    const axiosError = new Error('Not found');
+    (axiosError as any).isAxiosError = true;
+    (axiosError as any).response = { status: 404 };
+    mockGetConversation.mockRejectedValue(axiosError);
+    mockCreateConversation.mockResolvedValue({
+      id: 'conv-new',
+      title: null,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      messages: [],
+    });
+
+    const { messages, loadConversation } = useAIChat();
+    await loadConversation();
+
+    expect(mockGetConversation).toHaveBeenCalledWith('dead-conv');
+    expect(mockCreateConversation).toHaveBeenCalledTimes(1);
+    expect(messages.value).toEqual([]);
+  });
+
+  it('sends a message and appends the assistant response', async () => {
+    mockCreateConversation.mockResolvedValue({
+      id: 'conv-1',
+      title: null,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      messages: [],
+    });
+    mockSendMessage.mockResolvedValue({
+      id: 'm2',
+      role: 'ai',
+      content: 'Created a daily build task for you.',
+      createdAt: new Date().toISOString(),
+    });
+
+    const { messages, sendMessage } = useAIChat();
     await sendMessage('Create a task');
 
     expect(messages.value.length).toBe(2);
@@ -58,122 +125,60 @@ describe('useAIChat', () => {
     expect(messages.value[1].content).toBe('Created a daily build task for you.');
   });
 
-  it('summarizes actionable legacy responses without confirmation buttons', async () => {
-    const aiResponse = JSON.stringify({
-      action: 'create_task',
-      task: { name: 'Test', cron: '0 9 * * *', repository: 'https://github.com/test/repo' },
-    });
-
-    mockFetch.mockResolvedValueOnce({
-      text: () => Promise.resolve(aiResponse),
-    });
-
-    const { messages, sendMessage } = useAIChat('/api');
-
-    await sendMessage('Create a task');
-
-    expect(messages.value[1].content).toBe('Action: Create task\nTask: Test');
-  });
-
   it('sets isLoading during request', async () => {
-    let resolveFn: (value: { text: () => Promise<string> }) => void;
-    mockFetch.mockReturnValueOnce(new Promise(resolve => { resolveFn = resolve; }));
+    let resolveFn: (value: { id: string; role: 'ai'; content: string; createdAt: string }) => void;
+    mockSendMessage.mockReturnValueOnce(new Promise(resolve => { resolveFn = resolve; }));
+    mockCreateConversation.mockResolvedValue({
+      id: 'conv-1',
+      title: null,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      messages: [],
+    });
 
-    const { isLoading, sendMessage } = useAIChat('/api');
+    const { isLoading, sendMessage } = useAIChat();
 
     const sendPromise = sendMessage('test');
     expect(isLoading.value).toBe(true);
 
-    resolveFn!({ text: () => Promise.resolve('{}') });
+    resolveFn!({ id: 'm1', role: 'ai', content: 'ok', createdAt: new Date().toISOString() });
     await sendPromise;
 
     expect(isLoading.value).toBe(false);
   });
 
-  it('sets error on fetch failure', async () => {
-    mockFetch.mockRejectedValueOnce(new Error('Network error'));
-
-    const { error, sendMessage } = useAIChat('/api');
-
-    await sendMessage('test');
-
-    expect(error.value).toBe('Network error');
-  });
-
-  it('sets error on non-Error exception', async () => {
-    mockFetch.mockRejectedValueOnce('string error');
-
-    const { error, sendMessage } = useAIChat('/api');
-
-    await sendMessage('test');
-
-    expect(error.value).toBe('Network error');
-  });
-
-  it('calls fetch with correct URL, message and history', async () => {
-    mockFetch.mockResolvedValueOnce({ text: () => Promise.resolve('{}') });
-
-    const { sendMessage } = useAIChat('/api');
-
-    await sendMessage('Create a build task');
-
-    expect(mockFetch).toHaveBeenCalledTimes(1);
-    const [url, options] = mockFetch.mock.calls[0];
-    expect(url).toBe('/api/ai/message');
-    expect(options.method).toBe('POST');
-    expect(options.headers['Content-Type']).toBe('application/json');
-    const body = JSON.parse(options.body);
-    expect(body.message).toBe('Create a build task');
-    expect(body.history).toEqual([]);
-  });
-
-  it('sends previous messages as history', async () => {
-    mockFetch
-      .mockResolvedValueOnce({ text: () => Promise.resolve('first response') })
-      .mockResolvedValueOnce({ text: () => Promise.resolve('second response') });
-
-    const { sendMessage } = useAIChat('/api');
-
-    await sendMessage('first');
-    await sendMessage('second');
-
-    const secondCall = mockFetch.mock.calls[1];
-    const body = JSON.parse(secondCall[1].body);
-    expect(body.history).toEqual([
-      { role: 'user', content: 'first' },
-      { role: 'ai', content: 'first response' },
-    ]);
-  });
-
-  it('clears error on new message', async () => {
-    mockFetch.mockRejectedValueOnce(new Error('Network error'));
-
-    const { error, sendMessage } = useAIChat('/api');
-
-    await sendMessage('first');
-    expect(error.value).toBe('Network error');
-
-    mockFetch.mockResolvedValueOnce({ text: () => Promise.resolve('{}') });
-    await sendMessage('second');
-    expect(error.value).toBeNull();
-  });
-
-  it('generates unique message IDs', async () => {
-    let callCount = 0;
-    vi.stubGlobal('crypto', {
-      randomUUID: () => `uuid-${++callCount}`,
+  it('sets error on API failure', async () => {
+    mockCreateConversation.mockResolvedValue({
+      id: 'conv-1',
+      title: null,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      messages: [],
     });
+    mockSendMessage.mockRejectedValue(new Error('Network error'));
 
-    mockFetch.mockResolvedValueOnce({ text: () => Promise.resolve('{}') });
-
-    const { messages, sendMessage } = useAIChat('/api');
-
+    const { error, sendMessage } = useAIChat();
     await sendMessage('test');
 
-    expect(messages.value[0].id).toBe('uuid-1');
-    expect(messages.value[1].id).toBe('uuid-2');
-    expect(messages.value[0].id).not.toBe(messages.value[1].id);
+    expect(error.value).toBe('Network error');
+  });
 
-    vi.stubGlobal('crypto', { randomUUID: () => 'test-uuid-0001' });
+  it('clears conversation and creates a new one', async () => {
+    mockLocalStorage.getItem.mockReturnValue('conv-1');
+    mockCreateConversation.mockResolvedValue({
+      id: 'conv-2',
+      title: null,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      messages: [],
+    });
+    mockDeleteConversation.mockResolvedValue(undefined);
+
+    const { messages, clearChat } = useAIChat();
+    await clearChat();
+
+    expect(mockDeleteConversation).toHaveBeenCalledWith('conv-1');
+    expect(mockLocalStorage.removeItem).toHaveBeenCalledWith('chronocode-ai-chat-conversation-id');
+    expect(messages.value).toEqual([]);
   });
 });

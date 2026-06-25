@@ -1,104 +1,287 @@
+using System.Collections.Concurrent;
+using ChronoCode.Data;
 using ChronoCode.Models;
-using System.Text;
+using ChronoCode.Models.DTOs;
+using Microsoft.EntityFrameworkCore;
 
 namespace ChronoCode.Services;
 
 public interface IChatRuntimeService
 {
-    Task<string> SendChatMessageAsync(
+    Task<ChatConversationDto> CreateConversationAsync(CancellationToken cancellationToken = default);
+
+    Task<ChatConversationDto?> GetConversationAsync(Guid conversationId, CancellationToken cancellationToken = default);
+
+    Task<ChatMessageDto> SendMessageAsync(
+        Guid conversationId,
         string message,
-        List<ChatMessage>? history = null,
         CancellationToken cancellationToken = default);
+
+    Task DeleteConversationAsync(Guid conversationId, CancellationToken cancellationToken = default);
 }
 
-public class ChatRuntimeService : IChatRuntimeService
+public class ChatRuntimeService : IChatRuntimeService, IDisposable
 {
-    private const int MaxHistoryMessages = 20;
+    private readonly ConcurrentDictionary<Guid, SemaphoreSlim> _conversationLocks = new();
     private readonly IAgentRuntimeResolver _resolver;
+    private readonly IServiceScopeFactory _serviceScopeFactory;
     private readonly ILogger<ChatRuntimeService> _logger;
+    private bool _disposed;
 
-    public ChatRuntimeService(IAgentRuntimeResolver resolver, ILogger<ChatRuntimeService> logger)
+    public ChatRuntimeService(
+        IAgentRuntimeResolver resolver,
+        IServiceScopeFactory serviceScopeFactory,
+        ILogger<ChatRuntimeService> logger)
     {
         _resolver = resolver;
+        _serviceScopeFactory = serviceScopeFactory;
         _logger = logger;
     }
 
-    public async Task<string> SendChatMessageAsync(
-        string message,
-        List<ChatMessage>? history = null,
-        CancellationToken cancellationToken = default)
+    public async Task<ChatConversationDto> CreateConversationAsync(CancellationToken cancellationToken = default)
     {
+        using var scope = _serviceScopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<ChronoDbContext>();
+
         var workingDirectory = Path.Combine(Path.GetTempPath(), "chronocode-chat", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(workingDirectory);
 
+        var conversation = new ChatConversation
+        {
+            Title = "New Chat",
+            WorkingDirectory = workingDirectory,
+        };
+
+        db.ChatConversations.Add(conversation);
+        await db.SaveChangesAsync(cancellationToken);
+
+        return MapConversation(conversation);
+    }
+
+    public async Task<ChatConversationDto?> GetConversationAsync(Guid conversationId, CancellationToken cancellationToken = default)
+    {
+        using var scope = _serviceScopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<ChronoDbContext>();
+
+        var conversation = await db.ChatConversations
+            .AsNoTracking()
+            .Include(c => c.Messages)
+            .FirstOrDefaultAsync(c => c.Id == conversationId, cancellationToken);
+
+        return conversation == null ? null : MapConversation(conversation);
+    }
+
+    public async Task<ChatMessageDto> SendMessageAsync(
+        Guid conversationId,
+        string message,
+        CancellationToken cancellationToken = default)
+    {
+        var lockObj = _conversationLocks.GetOrAdd(conversationId, _ => new SemaphoreSlim(1, 1));
+        await lockObj.WaitAsync(cancellationToken);
+
         try
         {
-            var executionId = Guid.NewGuid();
-            var runtime = _resolver.Get(null);
+            using var scope = _serviceScopeFactory.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<ChronoDbContext>();
 
+            var conversation = await db.ChatConversations
+                .Include(c => c.Messages)
+                .FirstOrDefaultAsync(c => c.Id == conversationId, cancellationToken);
+
+            if (conversation == null)
+            {
+                throw new InvalidOperationException($"Conversation {conversationId} not found.");
+            }
+
+            Directory.CreateDirectory(conversation.WorkingDirectory);
+
+            var runtime = _resolver.Get(null);
             await runtime.EnsureReadyAsync(cancellationToken);
 
-            await runtime.EnsureExecutionSessionAsync(
-                executionId,
-                workingDirectory,
-                _ => Task.CompletedTask,
-                null,
-                cancellationToken);
+            var session = await GetOrResumeSessionAsync(conversation, runtime, cancellationToken);
 
-            var prompt = BuildPrompt(message, history);
+            // Persist the user message before sending it to the agent.
+            var userMessage = new ChatMessage
+            {
+                ConversationId = conversationId,
+                Role = "user",
+                Content = message,
+                CreatedAt = DateTime.UtcNow,
+            };
+            db.ChatMessages.Add(userMessage);
+            await db.SaveChangesAsync(cancellationToken);
+
+            var hasAssistantMessages = conversation.Messages.Any(m => m.Role == "ai");
+            var mode = hasAssistantMessages ? AgentMessageMode.FollowUp : AgentMessageMode.Prompt;
 
             var response = await runtime.SendMessageAsync(
-                executionId,
-                workingDirectory,
-                prompt,
-                AgentMessageMode.Prompt,
+                conversationId,
+                conversation.WorkingDirectory,
+                message,
+                mode,
                 _ => Task.CompletedTask,
                 cancellationToken);
+
+            var assistantMessage = new ChatMessage
+            {
+                ConversationId = conversationId,
+                Role = "ai",
+                Content = response,
+                CreatedAt = DateTime.UtcNow,
+            };
+            db.ChatMessages.Add(assistantMessage);
+
+            conversation.AgentSessionId = session.SessionId;
+            conversation.AgentSessionFile = session.SessionFile;
+            conversation.UpdatedAt = DateTime.UtcNow;
+            await db.SaveChangesAsync(cancellationToken);
 
             try
             {
-                await runtime.StopExecutionAsync(executionId, cancellationToken);
+                await runtime.StopExecutionAsync(conversationId, cancellationToken);
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Failed to stop chat runtime execution {ExecutionId}", executionId);
+                _logger.LogWarning(ex, "Failed to stop chat runtime execution {ConversationId}", conversationId);
             }
 
-            return response;
+            return MapMessage(assistantMessage);
         }
         finally
         {
+            lockObj.Release();
+        }
+    }
+
+    public async Task DeleteConversationAsync(Guid conversationId, CancellationToken cancellationToken = default)
+    {
+        var lockObj = _conversationLocks.GetOrAdd(conversationId, _ => new SemaphoreSlim(1, 1));
+        await lockObj.WaitAsync(cancellationToken);
+
+        try
+        {
+            using var scope = _serviceScopeFactory.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<ChronoDbContext>();
+
+            var conversation = await db.ChatConversations
+                .FirstOrDefaultAsync(c => c.Id == conversationId, cancellationToken);
+
+            if (conversation == null)
+            {
+                return;
+            }
+
+            var runtime = _resolver.Get(null);
             try
             {
-                Directory.Delete(workingDirectory, recursive: true);
+                await runtime.StopExecutionAsync(conversationId, cancellationToken);
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Failed to clean up chat working directory {WorkingDirectory}", workingDirectory);
+                _logger.LogDebug(ex, "No active chat runtime to stop for {ConversationId}", conversationId);
+            }
+
+            db.ChatConversations.Remove(conversation);
+            await db.SaveChangesAsync(cancellationToken);
+
+            try
+            {
+                Directory.Delete(conversation.WorkingDirectory, recursive: true);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to clean up chat working directory {WorkingDirectory}", conversation.WorkingDirectory);
+            }
+        }
+        finally
+        {
+            lockObj.Release();
+        }
+    }
+
+    public void Dispose()
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        _disposed = true;
+
+        var runtime = _resolver.Get(null);
+        foreach (var conversationId in _conversationLocks.Keys.ToList())
+        {
+            try
+            {
+                runtime.StopExecutionAsync(conversationId).GetAwaiter().GetResult();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "Ignoring stop failure during disposal");
+            }
+
+            if (_conversationLocks.TryRemove(conversationId, out var lockObj))
+            {
+                lockObj.Dispose();
             }
         }
     }
 
-    private static string BuildPrompt(string message, List<ChatMessage>? history)
+    private async Task<AgentExecutionSession> GetOrResumeSessionAsync(
+        ChatConversation conversation,
+        IAgentRuntime runtime,
+        CancellationToken cancellationToken)
     {
-        var promptBuilder = new StringBuilder();
-        if (history is { Count: > 0 })
+        var sessionRef = conversation.AgentSessionFile ?? conversation.AgentSessionId;
+        if (!string.IsNullOrWhiteSpace(sessionRef))
         {
-            promptBuilder.AppendLine("Previous conversation:");
-            foreach (var item in history.TakeLast(MaxHistoryMessages))
+            try
             {
-                var label = item.Role switch
-                {
-                    "user" => "User",
-                    "ai" => "Assistant",
-                    _ => item.Role,
-                };
-                promptBuilder.AppendLine($"{label}: {item.Content}");
+                return await runtime.ResumeExecutionSessionAsync(
+                    conversation.Id,
+                    conversation.WorkingDirectory,
+                    sessionRef,
+                    _ => Task.CompletedTask,
+                    cancellationToken);
             }
-            promptBuilder.AppendLine();
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to resume chat session {SessionRef}; starting fresh.", sessionRef);
+            }
         }
 
-        promptBuilder.AppendLine($"User: {message}");
-        return promptBuilder.ToString();
+        return await runtime.EnsureExecutionSessionAsync(
+            conversation.Id,
+            conversation.WorkingDirectory,
+            _ => Task.CompletedTask,
+            null,
+            cancellationToken);
+    }
+
+    private static ChatConversationDto MapConversation(ChatConversation conversation)
+    {
+        return new ChatConversationDto
+        {
+            Id = conversation.Id,
+            Title = conversation.Title,
+            CreatedAt = conversation.CreatedAt,
+            UpdatedAt = conversation.UpdatedAt,
+            Messages = conversation.Messages
+                .OrderBy(m => m.CreatedAt)
+                .Select(MapMessage)
+                .ToList(),
+        };
+    }
+
+    private static ChatMessageDto MapMessage(ChatMessage message)
+    {
+        return new ChatMessageDto
+        {
+            Id = message.Id,
+            Role = message.Role,
+            Content = message.Content,
+            CreatedAt = message.CreatedAt,
+        };
     }
 }
+

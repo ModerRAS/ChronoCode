@@ -37,8 +37,45 @@ public class AIController : ControllerBase
         _updateTaskValidator = updateTaskValidator;
     }
 
-    [HttpPost("message")]
-    public async Task<IActionResult> HandleChatMessage([FromBody] ChatMessageRequest request)
+    [HttpPost("conversations")]
+    public async Task<IActionResult> CreateConversation()
+    {
+        try
+        {
+            var cancellationToken = HttpContext?.RequestAborted ?? CancellationToken.None;
+            var conversation = await _chatRuntimeService.CreateConversationAsync(cancellationToken);
+            return Ok(conversation);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error creating chat conversation");
+            return StatusCode(500, new { error = new { code = "INTERNAL_ERROR", message = ex.Message } });
+        }
+    }
+
+    [HttpGet("conversations/{conversationId:guid}")]
+    public async Task<IActionResult> GetConversation(Guid conversationId)
+    {
+        try
+        {
+            var cancellationToken = HttpContext?.RequestAborted ?? CancellationToken.None;
+            var conversation = await _chatRuntimeService.GetConversationAsync(conversationId, cancellationToken);
+            if (conversation == null)
+            {
+                return NotFound(new { error = new { code = "NOT_FOUND", message = "Conversation not found" } });
+            }
+
+            return Ok(conversation);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error reading chat conversation {ConversationId}", conversationId);
+            return StatusCode(500, new { error = new { code = "INTERNAL_ERROR", message = ex.Message } });
+        }
+    }
+
+    [HttpPost("conversations/{conversationId:guid}/messages")]
+    public async Task<IActionResult> SendMessage(Guid conversationId, [FromBody] ChatMessageRequest request)
     {
         var requestValidation = await _chatMessageRequestValidator.ValidateAsync(request);
         if (!requestValidation.IsValid)
@@ -49,38 +86,32 @@ public class AIController : ControllerBase
         try
         {
             var cancellationToken = HttpContext?.RequestAborted ?? CancellationToken.None;
-            var response = await _chatRuntimeService.SendChatMessageAsync(request.Message, request.History, cancellationToken);
-
-            try
-            {
-                var jsonMatch = System.Text.RegularExpressions.Regex.Match(response, @"```json\s*([\s\S]*?)\s*```|$");
-                var jsonStr = jsonMatch.Success && jsonMatch.Value.StartsWith("```")
-                    ? jsonMatch.Groups[1].Value
-                    : response;
-
-                var structuredResponse = System.Text.Json.JsonSerializer.Deserialize<Models.AI.AIStructuredResponse>(jsonStr);
-                if (structuredResponse != null)
-                {
-                    return Ok(structuredResponse);
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogDebug(ex, "Failed to parse AI JSON response. Payload: {Response}", response);
-            }
-
-            return Ok(new Models.AI.AIStructuredResponse
-            {
-                Error = new Models.AI.AIError
-                {
-                    Code = "INFO",
-                    Message = response
-                }
-            });
+            var response = await _chatRuntimeService.SendMessageAsync(conversationId, request.Message, cancellationToken);
+            return Ok(response);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return NotFound(new { error = new { code = "NOT_FOUND", message = ex.Message } });
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error handling AI chat message");
+            _logger.LogError(ex, "Error sending chat message to conversation {ConversationId}", conversationId);
+            return StatusCode(500, new { error = new { code = "INTERNAL_ERROR", message = ex.Message } });
+        }
+    }
+
+    [HttpDelete("conversations/{conversationId:guid}")]
+    public async Task<IActionResult> DeleteConversation(Guid conversationId)
+    {
+        try
+        {
+            var cancellationToken = HttpContext?.RequestAborted ?? CancellationToken.None;
+            await _chatRuntimeService.DeleteConversationAsync(conversationId, cancellationToken);
+            return NoContent();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error deleting chat conversation {ConversationId}", conversationId);
             return StatusCode(500, new { error = new { code = "INTERNAL_ERROR", message = ex.Message } });
         }
     }

@@ -2,7 +2,7 @@
   <div class="ai-chat-container">
     <a-card title="AI Chat" class="chat-card">
       <template #extra>
-        <a-button type="link" @click="clearChat">Clear</a-button>
+        <a-button type="link" @click="handleClear">Clear</a-button>
       </template>
       
       <div class="messages-container" ref="messagesContainer">
@@ -63,12 +63,14 @@
 </template>
 
 <script setup lang="ts">
-import { ref, nextTick, watch } from 'vue'
+import { ref, nextTick, watch, onMounted } from 'vue'
 import { useAIChat } from '../composables/useAIChat'
 
-const OPENCODE_API_BASE = '/api'
+const { messages, isLoading, error, sendMessage, clearChat, loadConversation } = useAIChat()
 
-const { messages, isLoading, error, sendMessage, clearChat } = useAIChat(OPENCODE_API_BASE)
+onMounted(() => {
+  loadConversation()
+})
 
 const inputMessage = ref('')
 const messagesContainer = ref<HTMLElement | null>(null)
@@ -80,6 +82,10 @@ const handleSend = async () => {
   inputMessage.value = ''
 
   await sendMessage(content)
+}
+
+const handleClear = async () => {
+  await clearChat()
 }
 
 const prefillMessage = (text: string) => {

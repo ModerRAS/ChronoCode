@@ -1,152 +1,153 @@
-import { ref, watch } from 'vue';
-import { parseAIResponse } from '../utils/aiParser';
+import axios from 'axios'
+import { ref } from 'vue'
+import { chatApi } from '../api/chat'
 
 interface Message {
-  id: string;
-  role: 'user' | 'ai';
-  content: string;
-  timestamp: Date;
+  id: string
+  role: 'user' | 'ai'
+  content: string
+  timestamp: Date
 }
 
-interface HistoryMessage {
-  role: 'user' | 'ai';
-  content: string;
-}
+const STORAGE_KEY = 'chronocode-ai-chat-conversation-id'
 
-const STORAGE_KEY = 'chronocode-ai-chat-messages';
-
-function generateId(): string {
-  if (typeof crypto !== 'undefined' && crypto.randomUUID) {
-    return crypto.randomUUID();
-  }
-  // Fallback for older browsers
-  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
-    const r = (Math.random() * 16) | 0;
-    const v = c === 'x' ? r : (r & 0x3) | 0x8;
-    return v.toString(16);
-  });
-}
-
-function loadMessages(): Message[] {
+function loadConversationId(): string | null {
   if (typeof window === 'undefined') {
-    return [];
+    return null
   }
 
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) {
-      return [];
-    }
-
-    const parsed = JSON.parse(raw) as Array<Omit<Message, 'timestamp'> & { timestamp: string }>;
-    return Array.isArray(parsed)
-      ? parsed.map((m) => ({ ...m, timestamp: new Date(m.timestamp) }))
-      : [];
+    return window.localStorage.getItem(STORAGE_KEY)
   } catch {
-    return [];
+    return null
   }
 }
 
-function saveMessages(items: Message[]): void {
-  if (typeof window === 'undefined') {
-    return;
+function saveConversationId(id: string | null): void {
+  if (typeof window === 'undefined' || id === null) {
+    return
   }
 
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
+    window.localStorage.setItem(STORAGE_KEY, id)
   } catch {
     // Ignore storage errors (e.g. quota exceeded, private mode).
   }
 }
 
-function extractDisplayText(raw: string): string {
-  const parsed = parseAIResponse(raw);
-  if (!parsed) {
-    return raw;
+function removeConversationId(): void {
+  if (typeof window === 'undefined') {
+    return
   }
 
-  if (parsed.action === '') {
-    return parsed.error?.message ?? raw;
+  try {
+    window.localStorage.removeItem(STORAGE_KEY)
+  } catch {
+    // Ignore storage errors.
   }
-
-  // Actionable fallback (legacy prompt mode) – summarize without asking for confirmation,
-  // since the backend skill path now executes actions directly.
-  const actionLabels: Record<string, string> = {
-    create_task: 'Create task',
-    update_task: 'Update task',
-    delete_task: 'Delete task',
-    trigger_task: 'Trigger task',
-  };
-  const taskName = parsed.task?.name;
-  const taskId = parsed.task_id;
-  return [
-    `Action: ${actionLabels[parsed.action] ?? parsed.action}`,
-    taskName ? `Task: ${taskName}` : null,
-    taskId ? `Task ID: ${taskId}` : null,
-  ].filter(Boolean).join('\n');
 }
 
-export function useAIChat(opencodeApiBase: string) {
-  const messages = ref<Message[]>(loadMessages());
-  const isLoading = ref(false);
-  const error = ref<string | null>(null);
+function mapApiMessage(message: import('../api/chat').ChatMessage): Message {
+  return {
+    id: message.id,
+    role: message.role,
+    content: message.content,
+    timestamp: new Date(message.createdAt),
+  }
+}
 
-  watch(
-    messages,
-    (items) => {
-      saveMessages(items);
-    },
-    { deep: true }
-  );
+export function useAIChat() {
+  const conversationId = ref<string | null>(loadConversationId())
+  const messages = ref<Message[]>([])
+  const isLoading = ref(false)
+  const error = ref<string | null>(null)
+  const isInitialized = ref(false)
 
-  const sendMessage = async (content: string): Promise<void> => {
-    isLoading.value = true;
-    error.value = null;
+  const ensureConversation = async (): Promise<void> => {
+    if (conversationId.value) {
+      return
+    }
 
-    messages.value.push({
-      id: generateId(),
-      role: 'user',
-      content,
-      timestamp: new Date()
-    });
+    const conversation = await chatApi.createConversation()
+    conversationId.value = conversation.id
+    saveConversationId(conversation.id)
+    messages.value = []
+  }
+
+  const loadConversation = async (): Promise<void> => {
+    if (isInitialized.value) {
+      return
+    }
 
     try {
-      const history: HistoryMessage[] = messages.value
-        .slice(0, -1)
-        .map(({ role, content }) => ({ role, content }));
+      if (!conversationId.value) {
+        await ensureConversation()
+        isInitialized.value = true
+        return
+      }
 
-      const response = await fetch(`${opencodeApiBase}/ai/message`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: content, history })
-      });
+      try {
+        const conversation = await chatApi.getConversation(conversationId.value)
+        messages.value = conversation.messages.map(mapApiMessage)
+      } catch (e) {
+        // If the stored conversation no longer exists, create a fresh one.
+        if (axios.isAxiosError(e) && e.response?.status === 404) {
+          conversationId.value = null
+          await ensureConversation()
+        } else {
+          throw e
+        }
+      }
 
-      const data = await response.text();
-      const displayText = extractDisplayText(data);
+      isInitialized.value = true
+    } catch (e) {
+      error.value = e instanceof Error ? e.message : 'Failed to load chat history'
+    }
+  }
+
+  const sendMessage = async (content: string): Promise<void> => {
+    isLoading.value = true
+    error.value = null
+
+    try {
+      await ensureConversation()
+      if (!conversationId.value) {
+        throw new Error('No active conversation')
+      }
 
       messages.value.push({
-        id: generateId(),
-        role: 'ai',
-        content: displayText,
-        timestamp: new Date()
-      });
-    } catch (e) {
-      error.value = e instanceof Error ? e.message : 'Network error';
-    } finally {
-      isLoading.value = false;
-    }
-  };
+        id: `local-${Date.now()}`,
+        role: 'user',
+        content,
+        timestamp: new Date(),
+      })
 
-  const clearChat = (): void => {
-    messages.value = [];
-    if (typeof window !== 'undefined') {
+      const response = await chatApi.sendMessage(conversationId.value, content)
+
+      messages.value.push(mapApiMessage(response))
+    } catch (e) {
+      error.value = e instanceof Error ? e.message : 'Network error'
+    } finally {
+      isLoading.value = false
+    }
+  }
+
+  const clearChat = async (): Promise<void> => {
+    if (conversationId.value) {
       try {
-        localStorage.removeItem(STORAGE_KEY);
+        await chatApi.deleteConversation(conversationId.value)
       } catch {
-        // Ignore storage errors.
+        // Ignore delete failures; just start fresh locally.
       }
     }
-  };
 
-  return { messages, isLoading, error, sendMessage, clearChat };
+    removeConversationId()
+    conversationId.value = null
+    messages.value = []
+    isInitialized.value = false
+    await ensureConversation()
+    isInitialized.value = true
+  }
+
+  return { messages, isLoading, error, sendMessage, clearChat, loadConversation }
 }

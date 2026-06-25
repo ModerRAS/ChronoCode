@@ -37,13 +37,24 @@ public class ChatRuntimeService : IChatRuntimeService
 
             var prompt = BuildSystemPrompt(message);
 
-            return await runtime.SendMessageAsync(
+            var response = await runtime.SendMessageAsync(
                 executionId,
                 workingDirectory,
                 prompt,
                 AgentMessageMode.Prompt,
                 _ => Task.CompletedTask,
                 cancellationToken);
+
+            try
+            {
+                await runtime.StopExecutionAsync(executionId, cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to stop chat runtime execution {ExecutionId}", executionId);
+            }
+
+            return response;
         }
         finally
         {

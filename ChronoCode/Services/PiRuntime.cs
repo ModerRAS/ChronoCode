@@ -2,12 +2,14 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
+using Microsoft.Extensions.Hosting;
 
 namespace ChronoCode.Services;
 
 public class PiRuntime : IAgentRuntime
 {
     private readonly IConfiguration _configuration;
+    private readonly IHostEnvironment _environment;
     private readonly ILogger<PiRuntime> _logger;
     private readonly ConcurrentDictionary<Guid, PiExecutionState> _executions = new();
     private bool _isAvailable;
@@ -19,10 +21,13 @@ public class PiRuntime : IAgentRuntime
     private bool ApproveProjectTrust => bool.TryParse(_configuration["Pi:ApproveProjectTrust"], out var value) ? value : true;
     private string? SessionDir => EmptyToNull(_configuration["Pi:SessionDir"]);
     private string? SessionNamePrefix => EmptyToNull(_configuration["Pi:SessionNamePrefix"]);
+    private string? ChatSkillPath => _configuration["Pi:ChatSkillPath"];
+    private string ApiBaseUrl => _configuration["ChronoCode:ApiBaseUrl"] ?? "http://localhost:5000/api";
 
-    public PiRuntime(IConfiguration configuration, ILogger<PiRuntime> logger)
+    public PiRuntime(IConfiguration configuration, IHostEnvironment environment, ILogger<PiRuntime> logger)
     {
         _configuration = configuration;
+        _environment = environment;
         _logger = logger;
     }
 
@@ -221,6 +226,8 @@ public class PiRuntime : IAgentRuntime
             arguments.Add(sessionRef);
         }
 
+        AddChatSkillArgument(arguments);
+
         var process = new Process
         {
             StartInfo = CreateStartInfo(workingDirectory, arguments),
@@ -350,6 +357,8 @@ public class PiRuntime : IAgentRuntime
             RedirectStandardError = true,
             CreateNoWindow = true
         };
+
+        startInfo.EnvironmentVariables["CHRONOCODE_API_BASE_URL"] = ApiBaseUrl;
 
         var argumentList = arguments?.ToList() ?? [];
         if (OperatingSystem.IsWindows() && RequiresCommandShell(Command))
@@ -642,6 +651,28 @@ public class PiRuntime : IAgentRuntime
         }
 
         return $"{SessionNamePrefix}-{executionId:N}";
+    }
+
+    private void AddChatSkillArgument(List<string> arguments)
+    {
+        var configuredPath = ChatSkillPath;
+        if (string.IsNullOrWhiteSpace(configuredPath))
+        {
+            return;
+        }
+
+        var skillPath = Path.IsPathRooted(configuredPath)
+            ? configuredPath
+            : Path.Combine(_environment.ContentRootPath, configuredPath);
+
+        if (!Directory.Exists(skillPath) && !File.Exists(skillPath))
+        {
+            _logger.LogWarning("Chat skill path not found: {SkillPath}", skillPath);
+            return;
+        }
+
+        arguments.Add("--skill");
+        arguments.Add(skillPath);
     }
 
     private static void TryKill(Process process)

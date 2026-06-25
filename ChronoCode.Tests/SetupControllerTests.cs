@@ -2,6 +2,7 @@ using ChronoCode.Models.DTOs;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
 using System.Net;
 using System.Net.Http.Json;
 using Xunit;
@@ -28,7 +29,7 @@ public class SetupControllerTests
 
         Assert.NotNull(status);
         Assert.False(status.Initialized);
-        Assert.Equal("data/chronocode.db", status.DefaultSqlitePath);
+        Assert.Equal("storage/chronocode.db", status.DefaultSqlitePath);
     }
 
     [Fact]
@@ -55,6 +56,7 @@ public class SetupControllerTests
         return new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {
             builder.UseEnvironment("Testing");
+            builder.ConfigureLogging(logging => logging.ClearProviders());
             builder.ConfigureAppConfiguration((_, config) => configure(config));
         });
     }

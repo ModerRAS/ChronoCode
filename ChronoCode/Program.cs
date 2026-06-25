@@ -1,12 +1,10 @@
 using ChronoCode.Data;
 using ChronoCode.Middleware;
 using ChronoCode.Services;
+using ChronoCode.Services.Workflow;
 using ChronoCode.Validators;
 using FluentValidation;
 using FluentValidation.AspNetCore;
-using Hangfire;
-using Hangfire.MemoryStorage;
-using Hangfire.Dashboard;
 using Microsoft.AspNetCore.Http.Extensions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.FileProviders;
@@ -31,29 +29,27 @@ builder.Services.AddCors(options =>
     });
 });
 
-builder.Services.AddHangfire(config => config
-    .SetDataCompatibilityLevel(CompatibilityLevel.Version_180)
-    .UseSimpleAssemblyNameTypeSerializer()
-    .UseRecommendedSerializerSettings()
-    .UseMemoryStorage());
+builder.Services.AddSingleton<DatabaseRuntimeState>(sp =>
+    DatabaseConfiguration.CreateRuntimeState(sp.GetRequiredService<IConfiguration>()));
 
-builder.Services.AddHangfireServer(options => options.ServerName = "ChronoCode");
-
-builder.Services.AddDbContext<ChronoDbContext>(options =>
-    DatabaseConfiguration.Configure(options, builder.Configuration, builder.Environment));
+builder.Services.AddDbContext<ChronoDbContext>((sp, options) =>
+    DatabaseConfiguration.Configure(options, sp.GetRequiredService<DatabaseRuntimeState>(), builder.Environment));
 
 builder.Services.AddScoped<ITaskRepository, EfTaskRepository>();
 builder.Services.AddScoped<IExecutionRepository, EfExecutionRepository>();
 builder.Services.AddSingleton<ISetupService, SetupService>();
+builder.Services.AddSingleton<ISettingsService, SettingsService>();
 builder.Services.AddSingleton<IOpencodeServerManager, OpencodeServerManager>();
 builder.Services.AddSingleton<IOpencodeClient, OpencodeClient>();
+builder.Services.AddSingleton<IChatRuntimeService, ChatRuntimeService>();
 builder.Services.AddSingleton<OpencodeRuntime>();
 builder.Services.AddSingleton<PiRuntime>();
-builder.Services.AddSingleton<IAgentRuntime, ConfiguredAgentRuntime>();
 builder.Services.AddSingleton<IGitService, GitService>();
-builder.Services.AddScoped<ITaskRunner, TaskRunner>();
-builder.Services.AddScoped<ISchedulerService, HangfireSchedulerService>();
-builder.Services.AddScoped<ScheduledTaskJob>();
+builder.Services.AddScoped<IWorkspacePreparationService, WorkspacePreparationService>();
+builder.Services.AddScoped<IWorkflowRunService, WorkflowRunService>();
+builder.Services.AddSingleton<IAgentRuntimeResolver, AgentRuntimeResolver>();
+builder.Services.AddSingleton<ISchedulerService, AppSchedulerService>();
+builder.Services.AddHostedService<SchedulerBackgroundService>();
 
 builder.Services.AddHttpClient("Opencode", client =>
 {
@@ -70,6 +66,7 @@ builder.Services.AddHttpClient("GitHub", client =>
     client.BaseAddress = new Uri("https://api.github.com");
     client.DefaultRequestHeaders.Add("User-Agent", "ChronoCode");
 });
+
 var app = builder.Build();
 
 var setupInitialized = DatabaseConfiguration.IsConfigured(app.Configuration, app.Environment);
@@ -85,7 +82,8 @@ app.UseExceptionHandling();
 
 app.Use(async (context, next) =>
 {
-    if (DatabaseConfiguration.IsConfigured(app.Configuration, app.Environment))
+    var databaseRuntimeState = context.RequestServices.GetRequiredService<DatabaseRuntimeState>();
+    if (DatabaseConfiguration.IsConfigured(databaseRuntimeState))
     {
         await next();
         return;
@@ -121,18 +119,13 @@ app.UseStaticFiles(new StaticFileOptions
         Path.Combine(builder.Environment.ContentRootPath, "wwwroot")),
 });
 
-app.UseHangfireDashboard("/hangfire", new DashboardOptions
-{
-    Authorization = new[] { new HangfireAuthFilter(app.Environment) }
-});
-
 app.MapControllers();
 
-app.MapGet("/health", () => Results.Ok(new
+app.MapGet("/health", (DatabaseRuntimeState databaseRuntimeState) => Results.Ok(new
 {
     Status = "Healthy",
     Timestamp = DateTime.UtcNow,
-    Initialized = DatabaseConfiguration.IsConfigured(app.Configuration, app.Environment)
+    Initialized = DatabaseConfiguration.IsConfigured(databaseRuntimeState)
 }));
 
 app.MapFallback(async context =>
@@ -159,32 +152,26 @@ static async Task EnsureDatabaseAsync(WebApplication app)
 
     await using var scope = app.Services.CreateAsyncScope();
     var db = scope.ServiceProvider.GetRequiredService<ChronoDbContext>();
-    var provider = DatabaseConfiguration.NormalizeProvider(app.Configuration["Database:Provider"]);
+    var runtimeState = scope.ServiceProvider.GetRequiredService<DatabaseRuntimeState>();
+    var provider = runtimeState.Provider;
+    var legacy = await WorkflowMigration.ReadLegacyTasksAsync(db);
 
     if (provider == DatabaseConfiguration.SqliteProvider)
     {
         await db.Database.EnsureCreatedAsync();
-        return;
+    }
+    else
+    {
+        await db.Database.MigrateAsync();
     }
 
-    await db.Database.MigrateAsync();
-}
-
-public class HangfireAuthFilter : IDashboardAuthorizationFilter
-{
-    private readonly IHostEnvironment _environment;
-    
-    public HangfireAuthFilter(IHostEnvironment environment)
+    try
     {
-        _environment = environment;
+        await WorkflowMigration.ApplyBackfillAsync(db, legacy);
     }
-    
-    public bool Authorize(DashboardContext context)
+    catch (Exception ex)
     {
-        if (_environment.IsDevelopment())
-            return true;
-            
-        var httpContext = context.GetHttpContext();
-        return httpContext?.User?.Identity?.IsAuthenticated ?? false;
+        var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
+        logger.LogWarning(ex, "Workflow legacy backfill skipped");
     }
 }

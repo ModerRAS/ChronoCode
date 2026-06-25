@@ -1,10 +1,12 @@
 using System.Text.Json.Serialization;
+using ChronoCode.Models.DTOs;
 
 namespace ChronoCode.Models.AI;
 
 /// <summary>
-/// DTO for AI-structured task creation request
-/// Uses snake_case field names to match what AI returns
+/// DTO for AI-structured task management request.
+/// snake_case field names match the AI model output. The task payload now carries
+/// a workflow definition instead of a single prompt.
 /// </summary>
 public class AIStructuredResponse
 {
@@ -21,9 +23,6 @@ public class AIStructuredResponse
     public AIError? Error { get; set; }
 }
 
-/// <summary>
-/// Task DTO with snake_case fields (as returned by AI)
-/// </summary>
 public class AITaskDto
 {
     [JsonPropertyName("name")]
@@ -41,47 +40,61 @@ public class AITaskDto
     [JsonPropertyName("branch_strategy")]
     public string BranchStrategy { get; set; } = "new";
 
-    [JsonPropertyName("prompt")]
-    public string Prompt { get; set; } = string.Empty;
-
     [JsonPropertyName("max_runtime_seconds")]
     public int MaxRuntimeSeconds { get; set; } = 600;
 
     [JsonPropertyName("max_file_changes")]
     public int MaxFileChanges { get; set; } = 50;
 
-    [JsonPropertyName("require_plan_review")]
-    public bool RequirePlanReview { get; set; } = true;
-
     [JsonPropertyName("is_enabled")]
     public bool IsEnabled { get; set; } = true;
 
-    /// <summary>
-    /// Convert AI response DTO to CreateTaskDto
-    /// </summary>
-    public DTOs.CreateTaskDto ToCreateTaskDto()
+    [JsonPropertyName("workflow_definition_json")]
+    public string? WorkflowDefinitionJson { get; set; }
+
+    [JsonPropertyName("default_inputs_json")]
+    public string? DefaultInputsJson { get; set; }
+
+    [JsonPropertyName("runtime_backend")]
+    public string? RuntimeBackend { get; set; }
+
+    [JsonPropertyName("max_concurrent_runs")]
+    public int MaxConcurrentRuns { get; set; } = 1;
+
+    [JsonPropertyName("node_failure_policy_json")]
+    public string? NodeFailurePolicyJson { get; set; }
+
+    public CreateTaskDto ToCreateTaskDto()
     {
-        return new DTOs.CreateTaskDto
+        var workflowJson = string.IsNullOrWhiteSpace(WorkflowDefinitionJson)
+        ? Workflow.WorkflowDefinitionFactory.CreateDefaultJson(false, null)
+            : WorkflowDefinitionJson!;
+
+        var branchStrategy = string.Equals(BranchStrategy, "reuse", StringComparison.OrdinalIgnoreCase)
+            ? Models.BranchStrategy.Reuse
+            : Models.BranchStrategy.New;
+
+        return new CreateTaskDto
         {
             Name = Name,
             CronExpression = Cron,
             RepositoryUrl = Repository,
             BaseBranch = BaseBranch,
-            BranchStrategy = BranchStrategy?.ToLower() == "reuse" 
-                ? Models.BranchStrategy.Reuse 
-                : Models.BranchStrategy.New,
-            Prompt = Prompt,
+            BranchStrategy = branchStrategy,
             MaxRuntimeSeconds = MaxRuntimeSeconds,
             MaxFileChanges = MaxFileChanges,
-            RequirePlanReview = RequirePlanReview,
-            IsEnabled = IsEnabled
+            IsEnabled = IsEnabled,
+            WorkflowDefinitionJson = workflowJson,
+            DefaultInputsJson = DefaultInputsJson,
+            RuntimeBackend = RuntimeBackend,
+            MaxConcurrentRuns = MaxConcurrentRuns,
+            NodeFailurePolicyJson = string.IsNullOrWhiteSpace(NodeFailurePolicyJson)
+                ? Workflow.WorkflowDefinitionFactory.DefaultPiFailurePolicyJson()
+                : NodeFailurePolicyJson!
         };
     }
 }
 
-/// <summary>
-/// Error info returned by AI
-/// </summary>
 public class AIError
 {
     [JsonPropertyName("code")]
@@ -91,9 +104,6 @@ public class AIError
     public string Message { get; set; } = string.Empty;
 }
 
-/// <summary>
-/// Action constants for AI responses
-/// </summary>
 public static class AIActions
 {
     public const string CreateTask = "create_task";
@@ -101,7 +111,6 @@ public static class AIActions
     public const string DeleteTask = "delete_task";
     public const string TriggerTask = "trigger_task";
 
-    public static readonly string[] ValidActions = { CreateTask, UpdateTask, DeleteTask, TriggerTask };
-
-    public static bool IsValid(string action) => ValidActions.Contains(action);
+    public static bool IsValid(string? action) =>
+        action == CreateTask || action == UpdateTask || action == DeleteTask || action == TriggerTask;
 }

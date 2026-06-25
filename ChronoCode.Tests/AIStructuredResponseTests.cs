@@ -1,6 +1,7 @@
 using System.Text.Json;
 using ChronoCode.Models.AI;
 using ChronoCode.Models.DTOs;
+using ChronoCode.Models.Workflow;
 using Xunit;
 
 namespace ChronoCode.Tests;
@@ -28,7 +29,7 @@ public class AIStructuredResponseTests
     public void AIStructuredResponse_DefaultValues_AreCorrect()
     {
         var response = new AIStructuredResponse();
-        
+
         Assert.Equal(string.Empty, response.Action);
         Assert.Null(response.TaskId);
         Assert.Null(response.Task);
@@ -38,71 +39,102 @@ public class AIStructuredResponseTests
     [Fact]
     public void AIStructuredResponse_SerializesAndDeserializes_SnakeCaseContract()
     {
-        const string json = """
+        var original = new AIStructuredResponse
+        {
+            Action = AIActions.CreateTask,
+            TaskId = null,
+            Task = new AITaskDto
             {
-              "action": "create_task",
-              "task_id": null,
-              "task": {
-                "name": "Test Task",
-                "cron": "0 9 * * *",
-                "repository": "https://github.com/test/repo",
-                "base_branch": "main",
-                "branch_strategy": "reuse",
-                "prompt": "Test prompt",
-                "max_runtime_seconds": 120,
-                "max_file_changes": 7,
-                "require_plan_review": false,
-                "is_enabled": true
-              },
-              "error": null
+                Name = "AI Task",
+                Cron = "0 2 * * *",
+                Repository = "https://github.com/owner/repo",
+                BaseBranch = "main",
+                BranchStrategy = "reuse",
+                MaxRuntimeSeconds = 120,
+                MaxFileChanges = 7,
+                IsEnabled = false,
+                WorkflowDefinitionJson = "{}",
+                DefaultInputsJson = null,
+                RuntimeBackend = "pi",
+                MaxConcurrentRuns = 2,
+                NodeFailurePolicyJson = "{}"
             }
-            """;
+        };
 
-        var response = JsonSerializer.Deserialize<AIStructuredResponse>(json);
+        var json = JsonSerializer.Serialize(original);
+        var deserialized = JsonSerializer.Deserialize<AIStructuredResponse>(json);
 
-        Assert.NotNull(response);
-        Assert.Equal("create_task", response.Action);
-        Assert.Null(response.TaskId);
-        Assert.NotNull(response.Task);
-        Assert.Equal("reuse", response.Task.BranchStrategy);
-        Assert.Equal(120, response.Task.MaxRuntimeSeconds);
+        Assert.NotNull(deserialized);
+        Assert.Equal(AIActions.CreateTask, deserialized!.Action);
+        Assert.NotNull(deserialized.Task);
+        Assert.Equal("AI Task", deserialized.Task!.Name);
+        Assert.Equal("0 2 * * *", deserialized.Task.Cron);
+        Assert.Equal("https://github.com/owner/repo", deserialized.Task.Repository);
+        Assert.Equal("reuse", deserialized.Task.BranchStrategy);
+        Assert.Equal("pi", deserialized.Task.RuntimeBackend);
+        Assert.Equal(2, deserialized.Task.MaxConcurrentRuns);
 
-        var serialized = JsonSerializer.Serialize(response);
-
-        Assert.Contains("\"task_id\":null", serialized);
-        Assert.Contains("\"base_branch\":\"main\"", serialized);
-        Assert.Contains("\"branch_strategy\":\"reuse\"", serialized);
-        Assert.DoesNotContain("\"TaskId\"", serialized);
-        Assert.DoesNotContain("\"BaseBranch\"", serialized);
+        var taskJson = JsonDocument.Parse(json).RootElement.GetProperty("task").GetRawText();
+        Assert.Contains("workflow_definition_json", taskJson);
+        Assert.Contains("runtime_backend", taskJson);
+        Assert.Contains("max_concurrent_runs", taskJson);
     }
 
     [Fact]
     public void AIError_CanSetProperties()
     {
-        var error = new AIError
-        {
-            Code = "VALIDATION_ERROR",
-            Message = "Invalid input"
-        };
-
-        Assert.Equal("VALIDATION_ERROR", error.Code);
-        Assert.Equal("Invalid input", error.Message);
+        var error = new AIError { Code = "INFO", Message = "helpful response" };
+        Assert.Equal("INFO", error.Code);
+        Assert.Equal("helpful response", error.Message);
     }
 
     [Fact]
-    public void CreateTaskDto_RequiredFields_CanBeSet()
+    public void AITaskDto_ToCreateTaskDto_MapsWorkflowFields()
     {
-        var dto = new CreateTaskDto
+        var dto = new AITaskDto
         {
             Name = "AI Task",
-            CronExpression = "0 2 * * 1",
-            RepositoryUrl = "https://github.com/owner/repo",
-            Prompt = "Check TODO comments"
+            Cron = "0 2 * * *",
+            Repository = "https://github.com/owner/repo",
+            BaseBranch = "develop",
+            BranchStrategy = "reuse",
+            MaxRuntimeSeconds = 300,
+            MaxFileChanges = 10,
+            IsEnabled = true,
+            WorkflowDefinitionJson = WorkflowDefinitionSerializer.Serialize(WorkflowDefinitionFactory.CreateDefault(false, null)),
+            DefaultInputsJson = "{\"key\":\"value\"}",
+            RuntimeBackend = "pi",
+            MaxConcurrentRuns = 3,
+            NodeFailurePolicyJson = "{}"
         };
 
-        Assert.Equal("AI Task", dto.Name);
-        Assert.Equal("0 2 * * 1", dto.CronExpression);
-        Assert.Equal("https://github.com/owner/repo", dto.RepositoryUrl);
-        Assert.Equal("Check TODO comments", dto.Prompt);
+        var createDto = dto.ToCreateTaskDto();
+
+        Assert.Equal("AI Task", createDto.Name);
+        Assert.Equal("0 2 * * *", createDto.CronExpression);
+        Assert.Equal("https://github.com/owner/repo", createDto.RepositoryUrl);
+        Assert.Equal("develop", createDto.BaseBranch);
+        Assert.Equal(Models.BranchStrategy.Reuse, createDto.BranchStrategy);
+        Assert.Equal(300, createDto.MaxRuntimeSeconds);
+        Assert.Equal("pi", createDto.RuntimeBackend);
+        Assert.Equal(3, createDto.MaxConcurrentRuns);
+        Assert.False(string.IsNullOrWhiteSpace(createDto.WorkflowDefinitionJson));
+        Assert.True(WorkflowDefinitionValidator.IsValid(createDto.WorkflowDefinitionJson, out _));
+    }
+
+    [Fact]
+    public void AITaskDto_ToCreateTaskDto_DefaultsWorkflowWhenMissing()
+    {
+        var dto = new AITaskDto
+        {
+            Name = "Task",
+            Cron = "0 2 * * *",
+            Repository = "https://github.com/owner/repo"
+        };
+
+        var createDto = dto.ToCreateTaskDto();
+
+        Assert.False(string.IsNullOrWhiteSpace(createDto.WorkflowDefinitionJson));
+        Assert.True(WorkflowDefinitionValidator.IsValid(createDto.WorkflowDefinitionJson, out var error), error);
     }
 }

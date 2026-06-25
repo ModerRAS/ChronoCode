@@ -16,12 +16,14 @@ public class SetupService : ISetupService
 {
     private readonly IConfiguration _configuration;
     private readonly IHostEnvironment _environment;
+    private readonly DatabaseRuntimeState _databaseRuntimeState;
     private readonly ILogger<SetupService> _logger;
 
-    public SetupService(IConfiguration configuration, IHostEnvironment environment, ILogger<SetupService> logger)
+    public SetupService(IConfiguration configuration, IHostEnvironment environment, DatabaseRuntimeState databaseRuntimeState, ILogger<SetupService> logger)
     {
         _configuration = configuration;
         _environment = environment;
+        _databaseRuntimeState = databaseRuntimeState;
         _logger = logger;
     }
 
@@ -29,8 +31,8 @@ public class SetupService : ISetupService
     {
         return new SetupStatusDto
         {
-            Initialized = DatabaseConfiguration.IsConfigured(_configuration, _environment),
-            DatabaseProvider = DatabaseConfiguration.NormalizeProvider(_configuration["Database:Provider"]),
+            Initialized = _databaseRuntimeState.Initialized,
+            DatabaseProvider = _databaseRuntimeState.Provider,
             ConfigFilePath = Path.Combine(_environment.ContentRootPath, DatabaseConfiguration.LocalConfigFileName),
             DefaultSqlitePath = DatabaseConfiguration.DefaultSqlitePath
         };
@@ -54,6 +56,8 @@ public class SetupService : ISetupService
         };
 
         await WriteLocalConfigAsync(provider, connectionString, cancellationToken);
+        (_configuration as IConfigurationRoot)?.Reload();
+        _databaseRuntimeState.SetConfigured(provider, connectionString);
         await InitializeDatabaseAsync(provider, connectionString, cancellationToken);
 
         _logger.LogInformation("ChronoCode setup completed with provider {DatabaseProvider}", provider);
@@ -141,6 +145,17 @@ public class SetupService : ISetupService
             return;
         }
 
+        // Read legacy Prompt/RequirePlanReview columns BEFORE MigrateAsync drops/renames them.
+        // On a fresh DB this returns empty; on a legacy DB it returns the captured prompt text.
+        // (MigrateAsync renames Prompt -> WorkflowDefinitionJson, so without this capture the
+        // legacy prompt text would survive as the workflow JSON value and ApplyBackfillAsync
+        // would skip it as "non-empty".)
+        var legacy = await WorkflowMigration.ReadLegacyTasksAsync(dbContext, cancellationToken);
+
         await dbContext.Database.MigrateAsync(cancellationToken);
+
+        // After MigrateAsync, backfill any tasks whose WorkflowDefinitionJson is
+        // blank/"{}"/invalid (e.g. legacy prompt text that survived the rename).
+        await WorkflowMigration.ApplyBackfillAsync(dbContext, legacy, cancellationToken);
     }
 }

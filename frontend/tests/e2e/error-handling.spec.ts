@@ -2,6 +2,14 @@ import { test, expect } from '@playwright/test';
 
 test.describe('Error Handling', () => {
   test('renders invalid AI response as plain text', async ({ page }) => {
+    await page.route('**/api/setup/status', route => {
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ initialized: true, configFilePath: '', defaultSqlitePath: '' }),
+      });
+    });
+
     await page.route('**/api/ai/message', route => {
       route.fulfill({
         status: 200,

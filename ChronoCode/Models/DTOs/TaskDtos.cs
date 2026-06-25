@@ -1,6 +1,7 @@
-namespace ChronoCode.Models.DTOs;
-
 using System.ComponentModel.DataAnnotations;
+using ChronoCode.Models.Workflow;
+
+namespace ChronoCode.Models.DTOs;
 
 public class CreateTaskDto
 {
@@ -21,16 +22,22 @@ public class CreateTaskDto
 
     public BranchStrategy BranchStrategy { get; set; } = BranchStrategy.New;
 
-    [Required]
-    public string Prompt { get; set; } = string.Empty;
-
     public int MaxRuntimeSeconds { get; set; } = 600;
 
     public int MaxFileChanges { get; set; } = 50;
 
-    public bool RequirePlanReview { get; set; } = true;
-
     public bool IsEnabled { get; set; } = true;
+
+    [Required]
+    public string WorkflowDefinitionJson { get; set; } = "{}";
+
+    public string? DefaultInputsJson { get; set; }
+
+    public string? RuntimeBackend { get; set; }
+
+    public int MaxConcurrentRuns { get; set; } = 1;
+
+    public string NodeFailurePolicyJson { get; set; } = "{}";
 }
 
 public class UpdateTaskDto
@@ -49,15 +56,21 @@ public class UpdateTaskDto
 
     public BranchStrategy? BranchStrategy { get; set; }
 
-    public string? Prompt { get; set; }
-
     public int? MaxRuntimeSeconds { get; set; }
 
     public int? MaxFileChanges { get; set; }
 
-    public bool? RequirePlanReview { get; set; }
-
     public bool? IsEnabled { get; set; }
+
+    public string? WorkflowDefinitionJson { get; set; }
+
+    public string? DefaultInputsJson { get; set; }
+
+    public string? RuntimeBackend { get; set; }
+
+    public int? MaxConcurrentRuns { get; set; }
+
+    public string? NodeFailurePolicyJson { get; set; }
 }
 
 public class TaskDto
@@ -68,15 +81,23 @@ public class TaskDto
     public string RepositoryUrl { get; set; } = string.Empty;
     public string BaseBranch { get; set; } = string.Empty;
     public BranchStrategy BranchStrategy { get; set; }
-    public string Prompt { get; set; } = string.Empty;
     public int MaxRuntimeSeconds { get; set; }
     public int MaxFileChanges { get; set; }
-    public bool RequirePlanReview { get; set; }
+    public bool IsEnabled { get; set; }
+    public int WorkflowVersion { get; set; }
+    public string WorkflowDefinitionJson { get; set; } = "{}";
+    public string? DefaultInputsJson { get; set; }
+    public string? RuntimeBackend { get; set; }
+    public int MaxConcurrentRuns { get; set; }
+    public string NodeFailurePolicyJson { get; set; } = "{}";
     public DateTime CreatedAt { get; set; }
     public DateTime? LastRunAt { get; set; }
     public TaskStatus LastStatus { get; set; }
-    public bool IsEnabled { get; set; }
     public string? LastError { get; set; }
+    public DateTime? NextRunAt { get; set; }
+    public DateTime? LastQueuedAt { get; set; }
+    public string SchedulerStatus { get; set; } = ChronoCode.Models.Workflow.SchedulerStatus.Idle;
+    public DateTime? SchedulerHeartbeatAt { get; set; }
 }
 
 public class ExecutionDto
@@ -86,20 +107,43 @@ public class ExecutionDto
     public DateTime StartedAt { get; set; }
     public DateTime? CompletedAt { get; set; }
     public TaskStatus Status { get; set; }
+    public int WorkflowVersion { get; set; }
+    public string? CurrentNodeId { get; set; }
+    public string TriggerSource { get; set; } = WorkflowTriggerSource.Scheduled;
     public string? BranchName { get; set; }
     public string? CommitSha { get; set; }
     public string? PrUrl { get; set; }
     public int FilesChanged { get; set; }
     public string? ErrorMessage { get; set; }
+}
+
+public class NodeExecutionDto
+{
+    public Guid Id { get; set; }
+    public Guid ExecutionId { get; set; }
+    public string NodeId { get; set; } = string.Empty;
+    public string NodeType { get; set; } = string.Empty;
+    public string ScopeKey { get; set; } = string.Empty;
+    public int Attempt { get; set; }
+    public string Status { get; set; } = string.Empty;
+    public DateTime StartedAt { get; set; }
+    public DateTime? CompletedAt { get; set; }
+    public string? OutputJson { get; set; }
+    public string? ValidationError { get; set; }
     public string? AgentBackend { get; set; }
     public string? AgentSessionId { get; set; }
     public string? AgentSessionFile { get; set; }
     public string? AgentWorkingDirectory { get; set; }
+    public string? FailureReason { get; set; }
+    public DateTime? NextRetryAt { get; set; }
+    public int RetryCount { get; set; }
+    public DateTime? LeaseExpiresAt { get; set; }
 }
 
 public class ExecutionSessionDto
 {
     public Guid ExecutionId { get; set; }
+    public Guid NodeExecutionId { get; set; }
     public string? Backend { get; set; }
     public string? SessionId { get; set; }
     public string? SessionFile { get; set; }
@@ -125,10 +169,36 @@ public class ResumeExecutionSessionDto
     public string? SessionRef { get; set; }
 }
 
+public class ApprovalRequestDto
+{
+    public bool Approved { get; set; } = true;
+
+    public string? Reason { get; set; }
+}
+
 public class LogDto
 {
     public DateTime Timestamp { get; set; }
     public string Level { get; set; } = string.Empty;
     public string Message { get; set; } = string.Empty;
     public string? Details { get; set; }
+}
+
+public class SchedulerQueueSnapshotDto
+{
+    public int NewRunItems { get; set; }
+    public int NodeRetryItems { get; set; }
+    public int ActiveRuns { get; set; }
+    public List<QueueItemDto> Items { get; set; } = [];
+}
+
+public class QueueItemDto
+{
+    public string Kind { get; set; } = string.Empty;
+    public Guid? ExecutionId { get; set; }
+    public Guid? NodeExecutionId { get; set; }
+    public Guid? TaskId { get; set; }
+    public string? TaskName { get; set; }
+    public DateTime? NextRunAt { get; set; }
+    public DateTime? NextRetryAt { get; set; }
 }

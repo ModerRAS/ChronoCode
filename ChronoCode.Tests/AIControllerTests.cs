@@ -14,22 +14,15 @@ namespace ChronoCode.Tests;
 public class AIControllerTests
 {
     [Fact]
-    public async Task HandleChatMessage_ReturnsStructuredInfoResponse_AndDeletesTemporaryDirectory()
+    public async Task HandleChatMessage_ReturnsStructuredInfoResponse()
     {
-        var opencodeClient = new RecordingOpencodeClient
+        var chatRuntime = new RecordingChatRuntimeService
         {
-            SendPromptResult = JsonSerializer.Serialize(new AIStructuredResponse
-            {
-                Action = string.Empty,
-                Task = null,
-                Error = new AIError
-                {
-                    Code = "INFO",
-                    Message = "ok"
-                }
-            })
+            Response = """
+            {"error":{"code":"INFO","message":"ok"}}
+            """
         };
-        var controller = CreateController(opencodeClient);
+        var controller = CreateController(chatRuntime);
 
         var result = await controller.HandleChatMessage(new ChatMessageRequest
         {
@@ -44,43 +37,40 @@ public class AIControllerTests
         Assert.NotNull(response.Error);
         Assert.Equal("INFO", response.Error.Code);
         Assert.Equal("ok", response.Error.Message);
-        Assert.NotNull(opencodeClient.WorkingDirectory);
-        Assert.False(Directory.Exists(opencodeClient.WorkingDirectory));
+        Assert.Equal("help me summarize tasks", chatRuntime.LastMessage);
     }
 
     [Fact]
-    public async Task HandleChatMessage_ReturnsGenericInternalErrorMessage_WhenClientThrows()
+    public async Task HandleChatMessage_ReturnsServerUnavailable_WhenRuntimeUnavailable()
     {
-        var opencodeClient = new RecordingOpencodeClient
+        var chatRuntime = new RecordingChatRuntimeService
         {
-            CreateSessionException = new InvalidOperationException("secret filesystem path")
+            Exception = new HttpRequestException("runtime unavailable")
         };
-        var controller = CreateController(opencodeClient);
+        var controller = CreateController(chatRuntime);
 
         var result = await controller.HandleChatMessage(new ChatMessageRequest
         {
-            Message = "trigger an error"
+            Message = "create a task"
         });
 
         var objectResult = Assert.IsType<ObjectResult>(result);
         Assert.Equal(500, objectResult.StatusCode);
-        Assert.DoesNotContain("secret filesystem path", JsonSerializer.Serialize(objectResult.Value));
     }
 
     [Fact]
-    public async Task HandleAIStructuredResponse_CreateTask_ReturnsBadRequest_WhenTaskIsInvalid()
+    public async Task ExecuteStructuredResponse_CreateTask_ReturnsBadRequest_WhenTaskIsInvalid()
     {
-        var controller = CreateController(new RecordingOpencodeClient());
+        var controller = CreateController(new RecordingChatRuntimeService());
 
-        var result = await controller.HandleAIStructuredResponse(new AIStructuredResponse
+        var result = await controller.ExecuteStructuredResponse(new AIStructuredResponse
         {
             Action = AIActions.CreateTask,
             Task = new AITaskDto
             {
-                Name = "Broken task",
-                Cron = "invalid cron",
-                Repository = "not-a-url",
-                Prompt = string.Empty
+                Name = string.Empty,
+                Cron = "bad-cron",
+                Repository = "not-a-url"
             }
         });
 
@@ -88,7 +78,7 @@ public class AIControllerTests
     }
 
     [Fact]
-    public async Task HandleAIStructuredResponse_UpdateTask_ReturnsBadRequest_WhenTaskIsInvalid()
+    public async Task ExecuteStructuredResponse_UpdateTask_ReturnsBadRequest_WhenTaskIsInvalid()
     {
         var repository = new InMemoryTaskRepository(NullLogger<InMemoryTaskRepository>.Instance);
         var task = await repository.CreateAsync(new Models.DTOs.CreateTaskDto
@@ -96,77 +86,62 @@ public class AIControllerTests
             Name = "Existing task",
             CronExpression = "0 0 * * *",
             RepositoryUrl = "https://github.com/owner/repo",
-            Prompt = "Do work"
+            WorkflowDefinitionJson = ChronoCode.Models.Workflow.WorkflowDefinitionFactory.CreateDefaultJson(true, "Do work")
         });
-        var controller = CreateController(new RecordingOpencodeClient(), repository);
+        var controller = CreateController(new RecordingChatRuntimeService(), repository);
 
-        var result = await controller.HandleAIStructuredResponse(new AIStructuredResponse
+        var result = await controller.ExecuteStructuredResponse(new AIStructuredResponse
         {
             Action = AIActions.UpdateTask,
             TaskId = task.Id,
             Task = new AITaskDto
             {
-                Name = "Broken update",
-                Cron = "still invalid",
-                Repository = "still-not-a-url",
-                Prompt = string.Empty
+                Name = string.Empty,
+                Cron = "bad-cron",
+                Repository = "still-not-a-url"
             }
         });
 
         Assert.IsType<BadRequestObjectResult>(result);
     }
 
-    private static AIController CreateController(RecordingOpencodeClient opencodeClient, ITaskRepository? taskRepository = null)
+    private static AIController CreateController(RecordingChatRuntimeService chatRuntimeService, ITaskRepository? taskRepository = null)
     {
         return new AIController(
             taskRepository ?? new InMemoryTaskRepository(NullLogger<InMemoryTaskRepository>.Instance),
-            new InMemorySchedulerService(),
+            new StubSchedulerService(),
             NullLogger<AIController>.Instance,
-            opencodeClient,
+            chatRuntimeService,
             new ChatMessageRequestValidator(),
             new CreateTaskDtoValidator(),
             new UpdateTaskDtoValidator());
     }
 
-    private sealed class RecordingOpencodeClient : IOpencodeClient
+    private sealed class RecordingChatRuntimeService : IChatRuntimeService
     {
-        public bool Available { get; set; } = true;
-        public Exception? CreateSessionException { get; set; }
-        public string SendPromptResult { get; set; } = "Mock AI response";
-        public string? WorkingDirectory { get; private set; }
+        public string? LastMessage { get; private set; }
+        public string Response { get; set; } = "{}";
+        public Exception? Exception { get; set; }
 
-        public bool IsServerAvailable() => Available;
-
-        public Task<string> CreateSessionAsync(string workingDirectory, CancellationToken cancellationToken = default)
+        public Task<string> SendChatMessageAsync(string message, CancellationToken cancellationToken = default)
         {
-            WorkingDirectory = workingDirectory;
-            if (CreateSessionException != null)
+            LastMessage = message;
+            if (Exception != null)
             {
-                throw CreateSessionException;
+                throw Exception;
             }
 
-            return Task.FromResult("session-1");
+            return Task.FromResult(Response);
         }
+    }
 
-        public Task<string> SendPromptAsync(string sessionId, string prompt, string workingDirectory, CancellationToken cancellationToken = default)
-        {
-            WorkingDirectory = workingDirectory;
-            return Task.FromResult(SendPromptResult);
-        }
-
-        public Task<string> SendPromptWithStreamingAsync(string sessionId, string prompt, string workingDirectory, Func<string, Task> onChunk, CancellationToken cancellationToken = default)
-            => Task.FromResult(SendPromptResult);
-
-        public Task<List<FileDiff>> GetSessionDiffAsync(string sessionId, string? messageId = null, CancellationToken cancellationToken = default)
-            => Task.FromResult(new List<FileDiff>());
-
-        public Task AbortSessionAsync(string sessionId, CancellationToken cancellationToken = default)
-            => Task.CompletedTask;
-
-        public Task<List<SessionInfo>> ListSessionsAsync(CancellationToken cancellationToken = default)
-            => Task.FromResult(new List<SessionInfo>());
-
-        public Task<SessionInfo?> GetSessionAsync(string sessionId, CancellationToken cancellationToken = default)
-            => Task.FromResult<SessionInfo?>(null);
+    private sealed class StubSchedulerService : ISchedulerService
+    {
+        public Task SyncTaskAsync(ScheduledTask task, CancellationToken cancellationToken = default) => Task.CompletedTask;
+        public Task UnscheduleTaskAsync(Guid taskId, CancellationToken cancellationToken = default) => Task.CompletedTask;
+        public Task TriggerTaskAsync(Guid taskId, CancellationToken cancellationToken = default) => Task.CompletedTask;
+        public Task<List<ScheduledTask>> GetScheduledTasksAsync(CancellationToken cancellationToken = default) => Task.FromResult(new List<ScheduledTask>());
+        public Task<List<DateTime>> GetNextRunTimesAsync(Guid taskId, int count = 5, CancellationToken cancellationToken = default) => Task.FromResult(new List<DateTime>());
+        public Task<SchedulerQueueSnapshotDto> GetQueueSnapshotAsync(CancellationToken cancellationToken = default) => Task.FromResult(new SchedulerQueueSnapshotDto());
     }
 }

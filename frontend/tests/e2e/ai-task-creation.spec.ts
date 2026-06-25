@@ -1,5 +1,44 @@
 import { test, expect } from '@playwright/test';
 
+const WORKFLOW_DEFINITION_JSON = JSON.stringify({
+  version: 1,
+  startNodeId: 'start',
+  nodes: [
+    { type: 'start', nodeId: 'start', name: 'Start', nextNodeId: 'prepare' },
+    {
+      type: 'prepare_workspace',
+      nodeId: 'prepare',
+      name: 'Prepare Workspace',
+      nextNodeId: 'plan',
+    },
+    {
+      type: 'agent',
+      nodeId: 'plan',
+      name: 'Plan',
+      backend: 'pi',
+      promptTemplate: 'Analyze the repository and produce a plan.',
+      dataContract: { fields: [{ name: 'summary', type: 'string', required: true }] },
+      nextNodeId: 'commit',
+    },
+    {
+      type: 'commit_changes',
+      nodeId: 'commit',
+      name: 'Commit Changes',
+      commitMessageTemplate: 'AI: {{$.task.name}}',
+      nextNodeId: 'pr',
+    },
+    {
+      type: 'create_pull_request',
+      nodeId: 'pr',
+      name: 'Create Pull Request',
+      titleTemplate: '{{$.task.name}}',
+      bodyTemplate: '{{$.nodes.plan.output.summary}}',
+      nextNodeId: 'end',
+    },
+    { type: 'end', nodeId: 'end', name: 'End' },
+  ],
+});
+
 test.describe('AI Task Creation', () => {
   test('executes confirmed AI task creation through backend endpoint', async ({ page }) => {
     const aiResponse = {
@@ -11,16 +50,27 @@ test.describe('AI Task Creation', () => {
         repository: 'https://github.com/test/repo',
         base_branch: 'main',
         branch_strategy: 'new',
-        prompt: 'Run the daily check',
         max_runtime_seconds: 600,
         max_file_changes: 50,
-        require_plan_review: true,
         is_enabled: true,
+        workflow_definition_json: WORKFLOW_DEFINITION_JSON,
+        default_inputs_json: null,
+        runtime_backend: 'pi',
+        max_concurrent_runs: 1,
+        node_failure_policy_json: '{}',
       },
       error: null,
     };
 
     let executedBody: unknown;
+
+    await page.route('**/api/setup/status', route => {
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ initialized: true, configFilePath: '', defaultSqlitePath: '' }),
+      });
+    });
 
     await page.route('**/api/ai/message', route => {
       route.fulfill({

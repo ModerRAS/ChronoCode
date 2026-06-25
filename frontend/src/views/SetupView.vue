@@ -5,13 +5,17 @@
         <div>
           <div class="setup-badge">Initial Setup</div>
           <h1>Welcome to ChronoCode</h1>
-          <p>Choose a database to finish installation. This setup is intentionally simple and product-shaped, similar to Gitea: pick a backend, confirm paths or connection details, then initialize.</p>
+          <p>
+            Choose a database to finish installation. This setup is intentionally simple and product-shaped,
+            similar to Gitea: pick a backend, confirm paths or connection details, then initialize.
+            This page only appears before ChronoCode is initialized.
+          </p>
         </div>
       </div>
 
       <a-row :gutter="24">
         <a-col :xs="24" :lg="16">
-          <a-card title="Database Settings" class="setup-card">
+          <a-card title="Initial Database Setup" class="setup-card">
             <a-alert
               v-if="error"
               :message="error"
@@ -99,7 +103,7 @@
             <a-descriptions :column="1" size="small" bordered>
               <a-descriptions-item label="Initialized">{{ status?.initialized ? 'Yes' : 'No' }}</a-descriptions-item>
               <a-descriptions-item label="Provider">{{ status?.databaseProvider || 'Not set' }}</a-descriptions-item>
-              <a-descriptions-item label="SQLite default">{{ status?.defaultSqlitePath || 'data/chronocode.db' }}</a-descriptions-item>
+              <a-descriptions-item label="SQLite default">{{ status?.defaultSqlitePath || 'storage/chronocode.db' }}</a-descriptions-item>
             </a-descriptions>
           </a-card>
         </a-col>
@@ -123,7 +127,7 @@ const error = ref('')
 
 const form = reactive<InitializeSetupDto>({
   databaseProvider: 'sqlite',
-  sqlitePath: 'data/chronocode.db',
+  sqlitePath: 'storage/chronocode.db',
   postgresHost: 'localhost',
   postgresPort: 5432,
   postgresDatabase: 'chronocode',

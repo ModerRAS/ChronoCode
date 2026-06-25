@@ -3,7 +3,8 @@ using System.ComponentModel.DataAnnotations;
 namespace ChronoCode.Models;
 
 /// <summary>
-/// Represents a scheduled task configuration
+/// A scheduled workflow task definition: top-level scheduling/repo/runtime fields
+/// plus a persisted workflow graph DSL (WorkflowDefinitionJson).
 /// </summary>
 public class ScheduledTask
 {
@@ -27,14 +28,26 @@ public class ScheduledTask
 
     public BranchStrategy BranchStrategy { get; set; } = BranchStrategy.New;
 
-    [Required]
-    public string Prompt { get; set; } = string.Empty;
-
     public int MaxRuntimeSeconds { get; set; } = 600;
 
     public int MaxFileChanges { get; set; } = 50;
 
-    public bool RequirePlanReview { get; set; } = true;
+    public bool IsEnabled { get; set; } = true;
+
+    public int WorkflowVersion { get; set; } = 1;
+
+    [Required]
+    public string WorkflowDefinitionJson { get; set; } = "{}";
+
+    public string? DefaultInputsJson { get; set; }
+
+    /// <summary>"pi" | null. opencode is forbidden for workflow agent nodes.</summary>
+    [MaxLength(32)]
+    public string? RuntimeBackend { get; set; }
+
+    public int MaxConcurrentRuns { get; set; } = 1;
+
+    public string NodeFailurePolicyJson { get; set; } = "{}";
 
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
@@ -42,23 +55,25 @@ public class ScheduledTask
 
     public TaskStatus LastStatus { get; set; } = TaskStatus.Pending;
 
-    public bool IsEnabled { get; set; } = true;
-
     public string? LastError { get; set; }
+
+    public DateTime? NextRunAt { get; set; }
+
+    public DateTime? LastQueuedAt { get; set; }
+
+    public string SchedulerStatus { get; set; } = Workflow.SchedulerStatus.Idle;
+
+    public DateTime? SchedulerHeartbeatAt { get; set; }
 }
 
-/// <summary>
-/// Branch creation strategy
-/// </summary>
+/// <summary>Branch creation strategy</summary>
 public enum BranchStrategy
 {
-    New,      // Create a new branch for each run
-    Reuse     // Reuse existing branch
+    New,
+    Reuse
 }
 
-/// <summary>
-/// Task execution status
-/// </summary>
+/// <summary>Workflow run status (reused for task-level last status)</summary>
 public enum TaskStatus
 {
     Pending,

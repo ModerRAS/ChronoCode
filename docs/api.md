@@ -4,7 +4,7 @@
 
 ChronoCode 提供 RESTful API 用于管理定时任务。API 基于 JSON 格式进行请求和响应。
 
-**Base URL**: `http://localhost:5000/api`
+**Base URL**: `http://localhost:5242/api`
 
 ## 认证
 
@@ -51,10 +51,12 @@ ChronoCode 提供 RESTful API 用于管理定时任务。API 基于 JSON 格式�
   "repositoryUrl": "https://github.com/owner/repo",
   "baseBranch": "main",
   "branchStrategy": "New",
-  "prompt": "检查项目中的TODO注释并整理",
+  "workflowDefinitionJson": "{\"version\":1,\"startNodeId\":\"start\",\"nodes\":[...]}",
   "maxRuntimeSeconds": 600,
   "maxFileChanges": 50,
-  "requirePlanReview": true,
+  "runtimeBackend": "pi",
+  "maxConcurrentRuns": 1,
+  "nodeFailurePolicyJson": "{}",
   "isEnabled": true
 }
 ```
@@ -68,10 +70,13 @@ ChronoCode 提供 RESTful API 用于管理定时任务。API 基于 JSON 格式�
   "repositoryUrl": "https://github.com/owner/repo",
   "baseBranch": "main",
   "branchStrategy": "New",
-  "prompt": "检查项目中的TODO注释并整理",
+  "workflowVersion": 1,
+  "workflowDefinitionJson": "{\"version\":1,...}",
   "maxRuntimeSeconds": 600,
   "maxFileChanges": 50,
-  "requirePlanReview": true,
+  "runtimeBackend": "pi",
+  "maxConcurrentRuns": 1,
+  "nodeFailurePolicyJson": "{}",
   "createdAt": "2026-03-19T10:00:00Z",
   "lastRunAt": null,
   "lastStatus": "Pending",
@@ -188,11 +193,7 @@ ChronoCode 提供 RESTful API 用于管理定时任务。API 基于 JSON 格式�
     "commitSha": "abc1234",
     "prUrl": "https://github.com/owner/repo/pull/123",
     "filesChanged": 5,
-    "errorMessage": null,
-    "agentBackend": "pi",
-    "agentSessionId": "abc123",
-    "agentSessionFile": "C:/Users/.../session.jsonl",
-    "agentWorkingDirectory": "C:/workspaces/..."
+    "errorMessage": null
   }
 ]
 ```
@@ -249,10 +250,12 @@ ChronoCode 提供 RESTful API 用于管理定时任务。API 基于 JSON 格式�
     "repository": "https://github.com/owner/repo",
     "base_branch": "main",
     "branch_strategy": "new",
-    "prompt": "检查并整理项目中的TODO注释",
+    "workflow_definition_json": "{\"version\":1,\"startNodeId\":\"start\",\"nodes\":[...]}",
+    "runtime_backend": "pi",
+    "max_concurrent_runs": 1,
+    "node_failure_policy_json": "{}",
     "max_runtime_seconds": 600,
     "max_file_changes": 50,
-    "require_plan_review": true,
     "is_enabled": true
   },
   "error": null
@@ -291,10 +294,12 @@ ChronoCode 提供 RESTful API 用于管理定时任务。API 基于 JSON 格式�
     "repository": "https://github.com/owner/repo",
     "base_branch": "main",
     "branch_strategy": "new",
-    "prompt": "检查项目中的TODO注释并整理",
+    "workflow_definition_json": "{\"version\":1,\"startNodeId\":\"start\",\"nodes\":[...]}",
+    "runtime_backend": "pi",
+    "max_concurrent_runs": 1,
+    "node_failure_policy_json": "{}",
     "max_runtime_seconds": 600,
     "max_file_changes": 50,
-    "require_plan_review": true,
     "is_enabled": true
   }
 }
@@ -319,16 +324,23 @@ ChronoCode 提供 RESTful API 用于管理定时任务。API 基于 JSON 格式�
 
 ---
 
-## 执行会话 API
+## 节点运行与会话 API
 
-### 获取执行绑定的 agent 会话
+> 一个 workflow run 会有多个 agent 节点 session，因此会话 API 是 node-scoped（按 `nodeExecutionId`）。
 
-**GET** `/api/tasks/executions/{executionId}/session`
+### 列出某次 run 的节点执行
+
+**GET** `/api/tasks/executions/{executionId}/nodes`
+
+### 获取节点绑定的 agent 会话
+
+**GET** `/api/tasks/executions/{executionId}/nodes/{nodeExecutionId}/session`
 
 **Response** (200 OK):
 ```json
 {
   "executionId": "uuid",
+  "nodeExecutionId": "uuid",
   "backend": "pi",
   "sessionId": "abc123",
   "sessionFile": "C:/Users/.../session.jsonl",
@@ -344,9 +356,9 @@ ChronoCode 提供 RESTful API 用于管理定时任务。API 基于 JSON 格式�
 
 ---
 
-### 恢复或重连执行会话
+### 恢复或重连节点会话
 
-**POST** `/api/tasks/executions/{executionId}/resume`
+**POST** `/api/tasks/executions/{executionId}/nodes/{nodeExecutionId}/resume`
 
 `pi` 后端会优先使用 execution 上持久化的 `sessionFile`，不存在时回退到 `sessionId`。如果请求体提供了 `sessionRef`，则以该值为准。
 
@@ -361,6 +373,7 @@ ChronoCode 提供 RESTful API 用于管理定时任务。API 基于 JSON 格式�
 ```json
 {
   "executionId": "uuid",
+  "nodeExecutionId": "uuid",
   "backend": "pi",
   "sessionId": "abc123",
   "sessionFile": "C:/Users/.../session.jsonl",
@@ -379,9 +392,9 @@ ChronoCode 提供 RESTful API 用于管理定时任务。API 基于 JSON 格式�
 
 ---
 
-### 向运行中的 agent 追加消息
+### 向运行中的 agent 节点追加消息
 
-**POST** `/api/tasks/executions/{executionId}/message`
+**POST** `/api/tasks/executions/{executionId}/nodes/{nodeExecutionId}/message`
 
 **Request Body**:
 ```json
@@ -400,12 +413,24 @@ ChronoCode 提供 RESTful API 用于管理定时任务。API 基于 JSON 格式�
 ```json
 {
   "executionId": "uuid",
+  "nodeExecutionId": "uuid",
   "mode": "Steer",
-  "result": "queued",
-  "sessionId": "abc123",
-  "sessionFile": "C:/Users/.../session.jsonl"
+  "result": "queued"
 }
 ```
+
+---
+
+### 放行 approval_gate 节点
+
+**POST** `/api/tasks/executions/{executionId}/approval/{nodeExecutionId}`
+
+**Request Body**:
+```json
+{ "approved": true, "reason": null }
+```
+
+**Response** (200 OK): 空响应
 
 ---
 
@@ -487,10 +512,12 @@ opencode AI 应输出以下 JSON 格式：
     "repository": "https://github.com/owner/repo",
     "base_branch": "main",
     "branch_strategy": "new",
-    "prompt": "具体要AI做的事情",
+    "workflow_definition_json": "{\"version\":1,\"startNodeId\":\"start\",\"nodes\":[...]}",
+    "runtime_backend": "pi",
+    "max_concurrent_runs": 1,
+    "node_failure_policy_json": "{}",
     "max_runtime_seconds": 600,
     "max_file_changes": 50,
-    "require_plan_review": true,
     "is_enabled": true
   }
 }

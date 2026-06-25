@@ -195,7 +195,7 @@ const taskDefinition = computed<object | null>(() => {
 })
 
 const selectedExecution = computed<Execution | undefined>(() =>
-  executions.value.find(e => e.id === selectedExecutionId.value),
+  executions.value?.find(e => e.id === selectedExecutionId.value),
 )
 
 const selectedExecutionRunning = computed(
